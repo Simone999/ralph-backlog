@@ -145,10 +145,40 @@ extract_codex_thread_id_from_run_log() {
   local run_file="$1"
   local line
 
-  while IFS= read -r line; do
+  while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" == *'"type":"thread.started"'* ]] || continue
     if [[ "$line" =~ \"thread_id\":\"([^\"]+)\" ]]; then
       printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+  done < "$run_file"
+
+  return 1
+}
+
+extract_codex_turn_failure_from_run_log() {
+  local run_file="$1"
+  local line
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == *'"type":"turn.failed"'* ]] || continue
+    if [[ "$line" =~ \"error\":\"([^\"]+)\" ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+    printf 'unknown error\n'
+    return 0
+  done < "$run_file"
+
+  return 1
+}
+
+run_log_has_turn_completed() {
+  local run_file="$1"
+  local line
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == *'"type":"turn.completed"'* ]]; then
       return 0
     fi
   done < "$run_file"
@@ -249,12 +279,22 @@ run_codex(){
   local task_id="$1"
   local prompt="$2"
   local run_file="$3"
-  shift 3
+  local session_id="${4:-}"
 
   local last_message_file="/tmp/$(date -u '+ralph-last-message-%s.txt')"
+  local cmd
   mkdir -p "$(dirname "$run_file")"
 
-  if ! printf '%s' "$prompt" | "${CODEX_BASE_CMD[@]}" -o "$last_message_file" --json - > "$run_file"; then
+  if [[ -n "$session_id" ]]; then
+    cmd=("${CODEX_RESUME_CMD[@]}" "$session_id" -o "$last_message_file" --json -)
+  else
+    cmd=("${CODEX_EXEC_CMD[@]}" -o "$last_message_file" --json -)
+  fi
+
+  if ! printf '%s' "$prompt" | "${cmd[@]}" > "$run_file"; then
+    if [[ -n "$session_id" ]]; then
+      die "failed to resume Codex worker for task '$task_id'. Check '$run_file' for details."
+    fi
     die "failed to start Codex worker for task '$task_id'. Check '$run_file' for details."
   fi
   cat "$last_message_file" 2>/dev/null || true
@@ -323,14 +363,26 @@ if (( ${#SEQUENCE_TASKS[@]} > 0 )); then
 fi
 
 
-CODEX_BASE_CMD=(
-  codex
-  -a "$RALPH_APPROVAL_POLICY"
-  exec
+CODEX_COMMON_ARGS=(
   --color never
   -m "$RALPH_MODEL"
   -c "model_reasoning_effort=\"$RALPH_REASONING\""
   -s "$RALPH_SANDBOX"
+)
+
+CODEX_EXEC_CMD=(
+  codex
+  -a "$RALPH_APPROVAL_POLICY"
+  exec
+  "${CODEX_COMMON_ARGS[@]}"
+)
+
+CODEX_RESUME_CMD=(
+  codex
+  -a "$RALPH_APPROVAL_POLICY"
+  exec
+  resume
+  "${CODEX_COMMON_ARGS[@]}"
 )
 
 log "Starting Ralph - Tool: $TOOL - Max iterations: $MAX_ITERATIONS"
@@ -351,13 +403,23 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   prompt_template="$(cat "$SCRIPT_DIR/prompt-codex.md")"
   prompt=$(printf 'Assigned backlog task from `backlog task %s --plain`:\n\n%s\n\n%s' "$task_id" "$task_plain" "$prompt_template")
   run_file="$SCRIPT_DIR/runs/$(date -u '+ralph-run-%s.jsonl')"
-  OUTPUT=$(run_codex "$task_id" "$prompt" "$run_file")
+  OUTPUT=$(run_codex "$task_id" "$prompt" "$run_file" "$session_id")
 
   if [[ -z "$session_id" ]]; then
     session_id="$(extract_codex_thread_id_from_run_log "$run_file" || true)"
     [[ -n "$session_id" ]] || die "failed to capture Codex session id for task '$task_id'"
     write_task_session_assignee "$task_id" "$session_id"
   fi
+
+  turn_failure="$(extract_codex_turn_failure_from_run_log "$run_file" || true)"
+  if [[ -n "$turn_failure" ]]; then
+    die "Codex worker reported failure for task '$task_id': $turn_failure"
+  fi
+
+  if ! run_log_has_turn_completed "$run_file"; then
+    die "Codex worker ended without a clear outcome for task '$task_id'"
+  fi
+
   log "Using Codex session $session_id for task $task_id"
   
   # Check for completion signal

@@ -2,6 +2,7 @@
 - Shell regressions for `ralph.sh` live in `tests/ralph-runtime.sh`; mock external CLIs through `PATH` and never invoke real `codex`.
 - Backlog-driven selection tests should mock both `backlog task list --plain` and `backlog task <id> --plain`, and verify selected task text is piped into Codex stdin.
 - Ralph should move selected work to `In Progress` before `codex exec` runs; if no prior assignee exists, capture the real session id from the first `thread.started` JSONL event and then persist `codex@<session_id>`.
+- Parse `codex exec --json` logs by event type: `turn.completed` means success, `turn.failed` means failure, and shell readers must handle a final line without trailing newline or they can miss the outcome event.
 
 ---
 
@@ -49,4 +50,15 @@
   - Patterns discovered: `codex exec --json` exposes fresh session identity through the first `thread.started` JSONL event, which is safer for shell automation than parsing human stderr output.
   - Gotchas encountered: fresh-session tests need mocked JSONL startup output by default, otherwise Ralph cannot distinguish a missing session id from a launch failure.
   - Useful context: existing `codex@<session_id>` assignees still drive the pre-run claim path; actual resume invocation still belongs to the next session-resume story.
+---
+
+## 2026-04-16 01:08:00 CEST - US-005
+- Implemented resumed Codex worker runs in `ralph.sh`: tasks with `codex@<session_id>` assignees now invoke `codex exec resume <session_id>` instead of starting a fresh worker.
+- Added JSONL outcome handling so Ralph accepts `turn.completed`, rejects `turn.failed`, and fails loudly when a worker run ends without a clear outcome event.
+- Expanded `tests/ralph-runtime.sh` to cover resume command shape plus failure and unclear-outcome cases, and updated durable runtime-testing notes.
+- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
+- **Learnings for future iterations:**
+  - Patterns discovered: resumed non-interactive Codex work should use `codex exec resume <session_id>` and keep assignee metadata stable as `codex@<session_id>`.
+  - Gotchas encountered: Codex JSONL may omit trailing newline on the last event, so shell parsers that use plain `while read` can miss `turn.completed` and misclassify success as unclear.
+  - Useful context: outcome parsing now depends on JSONL event types rather than command exit alone, which keeps later verification stories aligned with the same log contract.
 ---

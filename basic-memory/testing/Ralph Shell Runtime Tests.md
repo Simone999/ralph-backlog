@@ -16,6 +16,9 @@ This lets tests verify CLI behavior, runtime control flow, and required-command 
 Likely future searches this note should answer: "how to test ralph.sh without real codex", "why does ralph runtime test remove jq", and "where are shell tests for codex-only loop".
 
 ## Observations
+- [pattern] Treat `turn.completed` as worker success and `turn.failed` as worker failure when consuming `codex exec --json` output; shell tests should model both events explicitly #codex #jsonl #testing
+- [gotcha] Codex JSONL logs may end without a trailing newline, so shell parsers must read with `while IFS= read -r line || [[ -n "$line" ]]` or the final outcome event can be missed #shell #jsonl
+
 - [pattern] Fresh-session runtime tests should feed mocked `codex exec --json` output with a `thread.started` event, then assert Ralph persists `codex@<thread_id>` after launch while leaving the task `In Progress` throughout #backlog #session #testing
 - [reason] Reloading `backlog task <id> --plain` after metadata edits keeps worker prompt text aligned with current assignee and status #backlog #prompt
 

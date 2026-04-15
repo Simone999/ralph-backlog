@@ -32,6 +32,7 @@ if [[ -n "${MOCK_CODEX_OUTPUT:-}" ]]; then
   printf '%s' "$MOCK_CODEX_OUTPUT"
 elif [[ "${MOCK_CODEX_SUPPRESS_OUTPUT:-0}" != "1" ]]; then
   printf '%s\n' '{"type":"thread.started","thread_id":"mock-session-123"}'
+  printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}'
 fi
 exit "${MOCK_CODEX_EXIT:-0}"
 EOF
@@ -305,7 +306,7 @@ test_fails_loudly_when_fresh_codex_session_id_is_missing() {
 }
 
 test_resumes_prior_session_from_assignee_metadata() {
-  local fixture output status edited_task
+  local fixture output status edited_task codex_args
 
   fixture="$(setup_fixture)"
   trap 'rm -rf "$fixture"' RETURN
@@ -319,10 +320,56 @@ test_resumes_prior_session_from_assignee_metadata() {
   set -e
 
   [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  codex_args="$(cat "$fixture/tmp/ralph-codex-args.txt")"
   edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
   assert_contains "$output" "Using Codex session resume-123 for task task-1"
+  assert_contains "$codex_args" "exec"
+  assert_contains "$codex_args" "resume"
+  assert_contains "$codex_args" "resume-123"
   assert_contains "$edited_task" "Status: ○ In Progress"
   assert_contains "$edited_task" "Assignee: codex@resume-123"
+}
+
+test_fails_when_worker_reports_turn_failed() {
+  local fixture output status edited_task
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Failing task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Failing task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(MOCK_CODEX_OUTPUT=$'{"type":"thread.started","thread_id":"session-fail-123"}\n{"type":"turn.failed","error":"worker exploded"}' run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -ne 0 ]] || fail "expected turn.failed outcome to fail"
+  assert_contains "$output" "Codex worker reported failure for task 'task-1': worker exploded"
+  edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
+  assert_contains "$edited_task" "Status: ○ In Progress"
+  assert_contains "$edited_task" "Assignee: codex@session-fail-123"
+}
+
+test_fails_when_worker_outcome_is_unclear() {
+  local fixture output status edited_task
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Unclear task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Unclear task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(MOCK_CODEX_OUTPUT=$'{"type":"thread.started","thread_id":"session-unclear-123"}\n{"type":"item.completed","item":{"type":"message","content":[]}}' run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -ne 0 ]] || fail "expected unclear outcome to fail"
+  assert_contains "$output" "Codex worker ended without a clear outcome for task 'task-1'"
+  edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
+  assert_contains "$edited_task" "Status: ○ In Progress"
+  assert_contains "$edited_task" "Assignee: codex@session-unclear-123"
 }
 
 test_rejects_amp
@@ -335,5 +382,7 @@ test_sequence_missing_task_fails_fast
 test_captures_fresh_session_id_and_writes_codex_assignee
 test_fails_loudly_when_fresh_codex_session_id_is_missing
 test_resumes_prior_session_from_assignee_metadata
+test_fails_when_worker_reports_turn_failed
+test_fails_when_worker_outcome_is_unclear
 
 printf 'PASS: ralph runtime\n'
