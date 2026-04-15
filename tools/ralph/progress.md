@@ -4,6 +4,7 @@
 - Ralph should move selected work to `In Progress` before `codex exec` runs; if no prior assignee exists, capture the real session id from the first `thread.started` JSONL event and then persist `codex@<session_id>`.
 - Parse `codex exec --json` logs by event type: `turn.completed` means success, `turn.failed` means failure, and shell readers must handle a final line without trailing newline or they can miss the outcome event.
 - Verification runs use `prompt-verifier.md`; verifier result comes from Codex `-o` last-message output with `<verification>PASS</verification>` or `<verification>FAIL</verification>`, while `--verify same-session` resumes worker session and `--verify new-session` starts fresh.
+- Verification pass should move task to `Done`; verification failure should append reviewer feedback via `backlog task edit --append-notes`, move task to `Review Failed`, and preserve worker assignee as `codex@<session_id>`.
 - Prompt migrations in `prompt-codex.md` should be covered by shell regressions that assert mocked Codex stdin contains required worker instructions and does not contain stale PRD-selection text.
 - In `flowchart/src/App.tsx`, avoid render-time reads of `ref.current`; React compiler lint also expects callbacks that touch a ref object to list that ref in the `useCallback` dependency array.
 
@@ -87,4 +88,15 @@
   - Patterns discovered: verifier review outcome should travel through Codex `-o` last-message output so review rejection stays separate from JSONL runtime failure.
   - Gotchas encountered: shell mocks for multi-pass Codex flows need per-invocation args/stdin capture plus mocked `-o` file writes, or verifier assertions silently see worker state.
   - Useful context: `same-session` verification keeps worker session id for later resume, while `new-session` captures a fresh verifier session id without rewriting assignee yet.
+---
+
+## 2026-04-16 01:28:44 CEST - US-008
+- Implemented verification-result transitions in `ralph.sh`: verifier pass now marks backlog task `Done`, while verifier failure appends review feedback to implementation notes, moves task to `Review Failed`, and preserves worker assignee as `codex@<session_id>`.
+- Expanded `tests/ralph-runtime.sh` so mocked verifier success asserts `Done` status and mocked verifier failure asserts `Review Failed` plus persisted review notes; extended backlog mock with `--append-notes` support to observe task feedback.
+- Updated reusable guidance in `AGENTS.md` and durable memory note `basic-memory/backlog/Implementation Notes.md`.
+- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `AGENTS.md`, `basic-memory/backlog/Implementation Notes.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
+- **Learnings for future iterations:**
+  - Patterns discovered: verification outcome handling belongs in Ralph runtime, not worker prompt; runtime should own final status transitions after verifier returns.
+  - Gotchas encountered: review feedback needs durable storage before failure exit, otherwise task status changes alone hide why verifier rejected work.
+  - Useful context: `new-session` verification still keeps worker assignee on failure; verifier session id is for review execution only, not resume ownership.
 ---

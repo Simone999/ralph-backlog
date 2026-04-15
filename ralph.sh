@@ -141,6 +141,25 @@ write_task_session_assignee() {
   fi
 }
 
+mark_task_done() {
+  local task_id="$1"
+  local session_id="$2"
+
+  if ! backlog task edit "$task_id" -s "Done" -a "codex@$session_id" >/dev/null; then
+    die "failed to mark backlog task '$task_id' done"
+  fi
+}
+
+mark_task_review_failed() {
+  local task_id="$1"
+  local session_id="$2"
+  local review_notes="$3"
+
+  if ! backlog task edit "$task_id" -s "Review Failed" -a "codex@$session_id" --append-notes "$review_notes" >/dev/null; then
+    die "failed to record verification failure for task '$task_id'"
+  fi
+}
+
 extract_verification_status() {
   local verifier_output="$1"
 
@@ -328,6 +347,9 @@ run_codex_verification() {
   local verifier_prompt_template verifier_prompt verifier_run_file verifier_output
   local verifier_session_id verification_status verification_notes turn_failure
 
+  VERIFICATION_RESULT=""
+  VERIFICATION_NOTES=""
+
   verifier_prompt_template="$(cat "$SCRIPT_DIR/prompt-verifier.md")"
   verifier_prompt=$(printf 'Assigned backlog task from `backlog task %s --plain`:\n\n%s\n\n%s' "$task_id" "$task_plain" "$verifier_prompt_template")
   verifier_run_file="$SCRIPT_DIR/runs/$(date -u '+ralph-verify-%s.jsonl')"
@@ -361,8 +383,12 @@ run_codex_verification() {
   if [[ "$verification_status" == "FAIL" ]]; then
     verification_notes="$(extract_verification_notes "$verifier_output")"
     [[ -n "$verification_notes" ]] || verification_notes="verification failed"
-    die "Codex verifier rejected task '$task_id': $verification_notes"
+    VERIFICATION_RESULT="FAIL"
+    VERIFICATION_NOTES="$verification_notes"
+    return 0
   fi
+
+  VERIFICATION_RESULT="PASS"
 }
 
 # Parse arguments
@@ -507,6 +533,12 @@ for i in $(seq 1 $MAX_ITERATIONS); do
 
   if [[ "$VERIFY_MODE" != "none" ]]; then
     run_codex_verification "$task_id" "$task_plain" "$session_id"
+    if [[ "$VERIFICATION_RESULT" == "PASS" ]]; then
+      mark_task_done "$task_id" "$session_id"
+    else
+      mark_task_review_failed "$task_id" "$session_id" "$VERIFICATION_NOTES"
+      die "Codex verifier rejected task '$task_id': $VERIFICATION_NOTES"
+    fi
   fi
   
   # Check for completion signal

@@ -115,6 +115,15 @@ if [[ "${1:-}" == "task" && "${2:-}" == "edit" && -n "${3:-}" ]]; then
           printf '\nAssignee: %s\n' "$assignee" >> "$task_file"
         fi
         ;;
+      --append-notes)
+        notes="$2"
+        shift 2
+        if grep -q '^Implementation Notes:$' "$task_file"; then
+          printf '\n%s\n' "$notes" >> "$task_file"
+        else
+          printf '\nImplementation Notes:\n%s\n' "$notes" >> "$task_file"
+        fi
+        ;;
       *)
         printf 'unexpected backlog edit args: %s\n' "$*" >&2
         exit 1
@@ -481,7 +490,7 @@ test_verification_none_skips_verifier_pass() {
 }
 
 test_same_session_verification_reuses_worker_session() {
-  local fixture output status verifier_args verifier_input
+  local fixture output status verifier_args verifier_input edited_task
 
   fixture="$(setup_fixture)"
   trap 'rm -rf "$fixture"' RETURN
@@ -497,11 +506,14 @@ test_same_session_verification_reuses_worker_session() {
   [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
   verifier_args="$(cat "$fixture/tmp/ralph-codex-args-2.txt")"
   verifier_input="$(cat "$fixture/tmp/ralph-codex-stdin-2.txt")"
+  edited_task="$(cat "$fixture/mock-backlog/task-1.txt")"
   assert_contains "$output" "Using Codex verification session worker-session-123 for task task-1"
   assert_contains "$verifier_args" "exec"
   assert_contains "$verifier_args" "resume"
   assert_contains "$verifier_args" "worker-session-123"
   assert_contains "$verifier_input" '# Ralph Codex Verifier Instructions'
+  assert_contains "$edited_task" "Status: ○ Done"
+  assert_contains "$edited_task" "Assignee: codex@worker-session-123"
 }
 
 test_new_session_verification_uses_fresh_verifier_session() {
@@ -543,9 +555,11 @@ test_fails_when_verifier_rejects_task() {
 
   [[ $status -ne 0 ]] || fail "expected verifier rejection to fail"
   assert_contains "$output" "Codex verifier rejected task 'task-1': Review notes: missing regression coverage."
-  edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
-  assert_contains "$edited_task" "Status: ○ In Progress"
+  edited_task="$(cat "$fixture/mock-backlog/task-1.txt")"
+  assert_contains "$edited_task" "Status: ○ Review Failed"
   assert_contains "$edited_task" "Assignee: codex@worker-session-123"
+  assert_contains "$edited_task" "Implementation Notes:"
+  assert_contains "$edited_task" "Review notes: missing regression coverage."
 }
 
 test_rejects_amp

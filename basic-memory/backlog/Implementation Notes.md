@@ -20,6 +20,7 @@ Append notes as work evolves. Keep them concise, time-ordered, and readable so s
 ```bash
 backlog task edit 42 --notes "Initial implementation done; pending integration tests"
 backlog task edit 42 --append-notes $'- Investigated root cause\n- Added tests for edge case'
+backlog task edit 42 --append-notes $'Review notes:\n- Missing regression coverage'  # verifier feedback
 ```
 
 ## Formatting
@@ -32,6 +33,7 @@ Use short paragraphs or bullet lists. Prefer markdown bullets when you have seve
 - [format] Keep notes concise and time-ordered
 - [format] Prefer bullets or short paragraphs over one long line
 - [usage] Blockers and intermediate decisions belong here
+- [usage] Verifier rejection notes should be appended here before moving task to `Review Failed`
 
 ## Relations
 - part_of [[Task Workflow]]
