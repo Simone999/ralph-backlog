@@ -408,6 +408,26 @@ test_sequence_missing_task_fails_fast() {
   [[ ! -f "$fixture/tmp/ralph-codex-stdin.txt" ]] || fail "expected codex not to run when sequence task is missing"
 }
 
+test_sequence_file_missing_task_fails_fast() {
+  local fixture output status
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  printf 'task-9\n' > "$fixture/sequence.txt"
+  write_task_list "$fixture" $'To Do:\n  [LOW] TASK-1 - Low todo'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Low todo\n==================================================\n\nStatus: ○ To Do\nPriority: Low\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" --sequence-file "$fixture/sequence.txt" 1)"
+  status=$?
+  set -e
+
+  [[ $status -ne 0 ]] || fail "expected missing sequence-file task to fail"
+  assert_contains "$output" "Sequence task 'task-9' not found in backlog."
+  [[ ! -f "$fixture/tmp/ralph-codex-stdin.txt" ]] || fail "expected codex not to run when sequence task is missing"
+}
+
 test_captures_fresh_session_id_and_writes_codex_assignee() {
   local fixture output status edited_task
 
@@ -427,6 +447,32 @@ test_captures_fresh_session_id_and_writes_codex_assignee() {
   assert_contains "$output" "Using Codex session session-fresh-123 for task task-1"
   assert_contains "$edited_task" "Status: ○ In Progress"
   assert_contains "$edited_task" "Assignee: codex@session-fresh-123"
+}
+
+test_round_trips_fresh_session_into_resume_run() {
+  local fixture output status first_args second_args edited_task
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Round trip task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Round trip task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(MOCK_CODEX_OUTPUT_1=$'{"type":"thread.started","thread_id":"session-roundtrip-123"}\n{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}' MOCK_CODEX_OUTPUT_2=$'{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}' run_script "$fixture" --sequence task-1,task-1 2)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected two-iteration round trip to stop at max iterations"
+  first_args="$(cat "$fixture/tmp/ralph-codex-args-1.txt")"
+  second_args="$(cat "$fixture/tmp/ralph-codex-args-2.txt")"
+  edited_task="$(cat "$fixture/mock-backlog/task-1.txt")"
+  assert_contains "$output" "Using Codex session session-roundtrip-123 for task task-1"
+  assert_not_contains "$first_args" "resume"
+  assert_contains "$second_args" "resume"
+  assert_contains "$second_args" "session-roundtrip-123"
+  assert_contains "$edited_task" "Status: ○ In Progress"
+  assert_contains "$edited_task" "Assignee: codex@session-roundtrip-123"
 }
 
 test_fails_loudly_when_fresh_codex_session_id_is_missing() {
@@ -514,6 +560,27 @@ test_fails_when_worker_outcome_is_unclear() {
   edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
   assert_contains "$edited_task" "Status: ○ In Progress"
   assert_contains "$edited_task" "Assignee: codex@session-unclear-123"
+}
+
+test_exits_successfully_when_worker_returns_completion_promise() {
+  local fixture output status codex_args
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Complete task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Complete task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(MOCK_CODEX_OUTPUT=$'{"type":"thread.started","thread_id":"session-complete-123"}\n{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}' MOCK_CODEX_LAST_MESSAGE=$'<promise>COMPLETE</promise>\nAll stories done.' run_script "$fixture" 5)"
+  status=$?
+  set -e
+
+  [[ $status -eq 0 ]] || fail "expected completion promise to exit successfully"
+  codex_args="$(cat "$fixture/tmp/ralph-codex-args.txt")"
+  assert_contains "$output" "Ralph completed all tasks!"
+  assert_contains "$output" "Completed at iteration 1 of 5"
+  assert_contains "$codex_args" "exec"
 }
 
 test_passes_task_scoped_worker_prompt_to_codex() {
@@ -675,11 +742,14 @@ test_retry_review_failed_prefers_review_failed_task
 test_sequence_cli_uses_explicit_order
 test_sequence_file_uses_explicit_order
 test_sequence_missing_task_fails_fast
+test_sequence_file_missing_task_fails_fast
 test_captures_fresh_session_id_and_writes_codex_assignee
+test_round_trips_fresh_session_into_resume_run
 test_fails_loudly_when_fresh_codex_session_id_is_missing
 test_resumes_prior_session_from_assignee_metadata
 test_fails_when_worker_reports_turn_failed
 test_fails_when_worker_outcome_is_unclear
+test_exits_successfully_when_worker_returns_completion_promise
 test_passes_task_scoped_worker_prompt_to_codex
 test_verification_none_skips_verifier_pass
 test_same_session_verification_reuses_worker_session

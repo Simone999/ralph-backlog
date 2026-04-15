@@ -16,6 +16,9 @@ This lets tests verify CLI behavior, runtime control flow, and required-command 
 Likely future searches this note should answer: "how to test ralph.sh without real codex", "why does ralph runtime test remove jq", and "where are shell tests for codex-only loop".
 
 ## Observations
+- [pattern] To prove fresh-session metadata round-trips into a later resume, force the same task twice with `--sequence task-1,task-1`; assert first mocked Codex call emits `thread.started` and second call uses `exec resume <session_id>` #session #testing
+- [pattern] Sequence-mode validation should fail before Codex starts for both `--sequence` and `--sequence-file`, so shell regressions should assert no mocked Codex stdin file exists on missing-task errors #sequence #testing
+
 - [pattern] Treat `turn.completed` as worker success and `turn.failed` as worker failure when consuming `codex exec --json` output; shell tests should model both events explicitly #codex #jsonl #testing
 - [gotcha] Codex JSONL logs may end without a trailing newline, so shell parsers must read with `while IFS= read -r line || [[ -n "$line" ]]` or the final outcome event can be missed #shell #jsonl
 

@@ -3,6 +3,7 @@
 - Backlog-driven selection tests should mock both `backlog task list --plain` and `backlog task <id> --plain`, and verify selected task text is piped into Codex stdin.
 - Selection tests that span multiple backlog statuses should mock separate `backlog task list -s "<status>" --sort priority --plain` outputs per status instead of reusing one shared task list fixture.
 - Ralph should move selected work to `In Progress` before `codex exec` runs; if no prior assignee exists, capture the real session id from the first `thread.started` JSONL event and then persist `codex@<session_id>`.
+- To test fresh-session metadata round-trips, force the same task twice with `--sequence task-1,task-1`; first mocked Codex run should emit `thread.started`, second should use `exec resume <session_id>`.
 - Parse `codex exec --json` logs by event type: `turn.completed` means success, `turn.failed` means failure, and shell readers must handle a final line without trailing newline or they can miss the outcome event.
 - Verification runs use `prompt-verifier.md`; verifier result comes from Codex `-o` last-message output with `<verification>PASS</verification>` or `<verification>FAIL</verification>`, while `--verify same-session` resumes worker session and `--verify new-session` starts fresh.
 - Verification pass should move task to `Done`; verification failure should append reviewer feedback via `backlog task edit --append-notes`, move task to `Review Failed`, and preserve worker assignee as `codex@<session_id>`.
@@ -111,4 +112,14 @@
   - Patterns discovered: multi-status selection logic is easiest to verify with separate mocked `backlog task list -s "<status>"` outputs per status in shell fixtures.
   - Gotchas encountered: status-based selection coverage is misleading if the mock backlog list ignores `-s`; teach the fixture about per-status list files before trusting the test.
   - Useful context: sequence overrides still bypass auto-selection pool rules, so `--sequence task-x` can intentionally resume `Review Failed` work even when auto-retry is off.
+---
+
+## 2026-04-16 01:40:05 CEST - US-010
+- Expanded `tests/ralph-runtime.sh` with shell regressions for sequence-file missing-task rejection, completion-signal success exit, and fresh-session-to-resume round-trip using a repeated `--sequence` task.
+- Updated reusable guidance in `AGENTS.md` and durable testing note `basic-memory/testing/Ralph Shell Runtime Tests.md`.
+- Files changed: `tests/ralph-runtime.sh`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
+- **Learnings for future iterations:**
+  - Patterns discovered: repeated `--sequence task-1,task-1` is simplest way to prove first-run session capture and later `exec resume` reuse in one shell regression.
+  - Gotchas encountered: sequence validation coverage should exercise both `--sequence` and `--sequence-file`, and both should fail before mocked Codex creates stdin artifacts.
+  - Useful context: worker success path is best asserted through mocked Codex `-o` last-message output carrying `<promise>COMPLETE</promise>`, while JSONL stdout still carries `thread.started` and `turn.completed`.
 ---
