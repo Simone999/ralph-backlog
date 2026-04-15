@@ -3,6 +3,8 @@
 - Backlog-driven selection tests should mock both `backlog task list --plain` and `backlog task <id> --plain`, and verify selected task text is piped into Codex stdin.
 - Ralph should move selected work to `In Progress` before `codex exec` runs; if no prior assignee exists, capture the real session id from the first `thread.started` JSONL event and then persist `codex@<session_id>`.
 - Parse `codex exec --json` logs by event type: `turn.completed` means success, `turn.failed` means failure, and shell readers must handle a final line without trailing newline or they can miss the outcome event.
+- Prompt migrations in `prompt-codex.md` should be covered by shell regressions that assert mocked Codex stdin contains required worker instructions and does not contain stale PRD-selection text.
+- In `flowchart/src/App.tsx`, avoid render-time reads of `ref.current`; React compiler lint also expects callbacks that touch a ref object to list that ref in the `useCallback` dependency array.
 
 ---
 
@@ -61,4 +63,16 @@
   - Patterns discovered: resumed non-interactive Codex work should use `codex exec resume <session_id>` and keep assignee metadata stable as `codex@<session_id>`.
   - Gotchas encountered: Codex JSONL may omit trailing newline on the last event, so shell parsers that use plain `while read` can miss `turn.completed` and misclassify success as unclear.
   - Useful context: outcome parsing now depends on JSONL event types rather than command exit alone, which keeps later verification stories aligned with the same log contract.
+---
+
+## 2026-04-16 01:15:06 CEST - US-006
+- Replaced legacy PRD-loop Codex prompt in `prompt-codex.md` with task-scoped worker instructions: work only on assigned backlog task, write plan before coding, refine weak AC/DoD through `backlog task edit`, check items only when truly complete, and write final summary before returning control to Ralph.
+- Added prompt regression coverage in `tests/ralph-runtime.sh` by asserting mocked Codex stdin contains required backlog-worker instructions and excludes stale `prd.json` story-selection text.
+- Fixed existing `flowchart` lint blockers in `flowchart/src/App.tsx` so repo quality checks stay green after this story.
+- Updated reusable guidance in `AGENTS.md` and durable notes in `basic-memory/testing/Ralph Shell Runtime Tests.md` plus new note `basic-memory/frontend/Flowchart React Compiler Lint.md`.
+- Files changed: `prompt-codex.md`, `tests/ralph-runtime.sh`, `flowchart/src/App.tsx`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `basic-memory/frontend/Flowchart React Compiler Lint.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
+- **Learnings for future iterations:**
+  - Patterns discovered: test prompt changes through mocked Codex stdin so one shell regression covers both `ralph.sh` task wrapper text and `prompt-codex.md` content.
+  - Gotchas encountered: `eslint-plugin-react-hooks` in `flowchart` flags both render-time `ref.current` reads and missing ref objects in `useCallback` dependency arrays.
+  - Useful context: worker prompt now assumes Ralph already chose task and that all task mutations must go through `backlog task edit`, not direct task file edits.
 ---

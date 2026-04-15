@@ -29,6 +29,9 @@ Likely future searches this note should answer: "how to test ralph.sh without re
 - [pattern] Backlog-driven runtime tests should mock both `backlog task list --plain` and `backlog task <id> --plain`, then assert Codex stdin contains selected task text #backlog #testing
 - [gotcha] Missing `backlog task <id> --plain` lookups may surface as text output rather than a trustworthy nonzero exit, so runtime code should validate task detail shape before treating lookup as success #backlog #cli
 
+- [pattern] Prompt migrations should be regression-tested through mocked Codex stdin, asserting required worker instructions are present and stale `prd.json` or task-selection text is absent #prompt #testing
+- [reason] `ralph.sh` prepends assigned task text before `prompt-codex.md`, so stdin assertions catch both prompt drift and wrapper drift in one shell-level test #prompt #shell
+
 ## Relations
 - relates_to [[Ralph Backlog Loop Design Spec]]
 - relates_to [[Ralph Backlog Loop Design Decisions]]

@@ -16,6 +16,13 @@ assert_contains() {
   [[ "$haystack" == *"$needle"* ]] || fail "expected output to contain: $needle"
 }
 
+assert_not_contains() {
+  local haystack="$1"
+  local needle="$2"
+
+  [[ "$haystack" != *"$needle"* ]] || fail "expected output to not contain: $needle"
+}
+
 setup_fixture() {
   local fixture
   fixture="$(mktemp -d)"
@@ -372,6 +379,37 @@ test_fails_when_worker_outcome_is_unclear() {
   assert_contains "$edited_task" "Assignee: codex@session-unclear-123"
 }
 
+test_passes_task_scoped_worker_prompt_to_codex() {
+  local fixture output status codex_input
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Prompt task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Prompt task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  codex_input="$(cat "$fixture/tmp/ralph-codex-stdin.txt")"
+  assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
+  assert_contains "$codex_input" 'Assigned backlog task from `backlog task task-1 --plain`:'
+  assert_not_contains "$codex_input" 'Read the PRD at `[PRD]`'
+  assert_not_contains "$codex_input" 'Pick the **highest priority** user story where `passes: false`'
+  assert_not_contains "$codex_input" 'Update the PRD to set `passes: true` for the completed story'
+  assert_contains "$codex_input" 'Write implementation plan into assigned backlog task before coding.'
+  assert_contains "$codex_input" 'Use `backlog task edit <id> --plan`'
+  assert_contains "$codex_input" 'You may create, edit, or remove weak acceptance criteria and definition-of-done items before implementation.'
+  assert_contains "$codex_input" 'Use `--ac`, `--remove-ac`, `--dod`, and `--remove-dod` through `backlog task edit`.'
+  assert_contains "$codex_input" 'Check acceptance criteria and definition-of-done items only when work is truly complete.'
+  assert_contains "$codex_input" 'Use repeated `--check-ac` and `--check-dod` flags, never comma lists or ranges.'
+  assert_contains "$codex_input" 'Write final summary into backlog task before returning control to Ralph.'
+  assert_contains "$codex_input" 'Use `backlog task edit <id> --final-summary`'
+}
+
 test_rejects_amp
 test_rejects_claude
 test_runs_without_prd_or_jq
@@ -384,5 +422,6 @@ test_fails_loudly_when_fresh_codex_session_id_is_missing
 test_resumes_prior_session_from_assignee_metadata
 test_fails_when_worker_reports_turn_failed
 test_fails_when_worker_outcome_is_unclear
+test_passes_task_scoped_worker_prompt_to_codex
 
 printf 'PASS: ralph runtime\n'

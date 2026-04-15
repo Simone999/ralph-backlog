@@ -225,25 +225,36 @@ function createNoteNode(note: typeof notes[0], visible: boolean, position?: { x:
   };
 }
 
+function buildNodes(
+  count: number,
+  nodePositions: { [key: string]: { x: number; y: number } }
+): Node[] {
+  const stepNodes = allSteps.map((step, index) =>
+    createNode(step, index < count, nodePositions[step.id])
+  );
+  const noteNodes = notes.map((note) => {
+    const noteVisible = count >= note.appearsWithStep;
+    return createNoteNode(note, noteVisible, nodePositions[note.id]);
+  });
+
+  return [...stepNodes, ...noteNodes];
+}
+
+function buildEdges(visibleStepCount: number): Edge[] {
+  return edgeConnections.map((conn) => {
+    const sourceIndex = allSteps.findIndex((step) => step.id === conn.source);
+    const targetIndex = allSteps.findIndex((step) => step.id === conn.target);
+    return createEdge(conn, sourceIndex < visibleStepCount && targetIndex < visibleStepCount);
+  });
+}
+
 function App() {
   const [visibleCount, setVisibleCount] = useState(1);
-  const nodePositions = useRef<{ [key: string]: { x: number; y: number } }>({ ...positions });
+  const initialPositions = { ...positions };
+  const nodePositions = useRef<{ [key: string]: { x: number; y: number } }>(initialPositions);
 
-  const getNodes = (count: number) => {
-    const stepNodes = allSteps.map((step, index) =>
-      createNode(step, index < count, nodePositions.current[step.id])
-    );
-    const noteNodes = notes.map(note => {
-      const noteVisible = count >= note.appearsWithStep;
-      return createNoteNode(note, noteVisible, nodePositions.current[note.id]);
-    });
-    return [...stepNodes, ...noteNodes];
-  };
-
-  const initialNodes = getNodes(1);
-  const initialEdges = edgeConnections.map((conn, index) =>
-    createEdge(conn, index < 0)
-  );
+  const initialNodes = buildNodes(1, initialPositions);
+  const initialEdges = buildEdges(0);
 
   const [nodes, setNodes] = useNodesState(initialNodes);
   const [edges, setEdges] = useEdgesState(initialEdges);
@@ -257,7 +268,7 @@ function App() {
       });
       setNodes((nds) => applyNodeChanges(changes, nds));
     },
-    [setNodes]
+    [nodePositions, setNodes]
   );
 
   const onEdgesChange = useCallback(
@@ -281,46 +292,32 @@ function App() {
     [setEdges]
   );
 
-  const getEdgeVisibility = (conn: typeof edgeConnections[0], visibleStepCount: number) => {
-    const sourceIndex = allSteps.findIndex(s => s.id === conn.source);
-    const targetIndex = allSteps.findIndex(s => s.id === conn.target);
-    return sourceIndex < visibleStepCount && targetIndex < visibleStepCount;
-  };
-
   const handleNext = useCallback(() => {
     if (visibleCount < allSteps.length) {
       const newCount = visibleCount + 1;
       setVisibleCount(newCount);
 
-      setNodes(getNodes(newCount));
-      setEdges(
-        edgeConnections.map((conn) =>
-          createEdge(conn, getEdgeVisibility(conn, newCount))
-        )
-      );
+      setNodes(buildNodes(newCount, nodePositions.current));
+      setEdges(buildEdges(newCount));
     }
-  }, [visibleCount, setNodes, setEdges]);
+  }, [nodePositions, visibleCount, setNodes, setEdges]);
 
   const handlePrev = useCallback(() => {
     if (visibleCount > 1) {
       const newCount = visibleCount - 1;
       setVisibleCount(newCount);
 
-      setNodes(getNodes(newCount));
-      setEdges(
-        edgeConnections.map((conn) =>
-          createEdge(conn, getEdgeVisibility(conn, newCount))
-        )
-      );
+      setNodes(buildNodes(newCount, nodePositions.current));
+      setEdges(buildEdges(newCount));
     }
-  }, [visibleCount, setNodes, setEdges]);
+  }, [nodePositions, visibleCount, setNodes, setEdges]);
 
   const handleReset = useCallback(() => {
     setVisibleCount(1);
     nodePositions.current = { ...positions };
-    setNodes(getNodes(1));
-    setEdges(edgeConnections.map((conn, index) => createEdge(conn, index < 0)));
-  }, [setNodes, setEdges]);
+    setNodes(buildNodes(1, nodePositions.current));
+    setEdges(buildEdges(0));
+  }, [nodePositions, setNodes, setEdges]);
 
   return (
     <div className="app-container">
