@@ -3,6 +3,7 @@
 - Backlog-driven selection tests should mock both `backlog task list --plain` and `backlog task <id> --plain`, and verify selected task text is piped into Codex stdin.
 - Ralph should move selected work to `In Progress` before `codex exec` runs; if no prior assignee exists, capture the real session id from the first `thread.started` JSONL event and then persist `codex@<session_id>`.
 - Parse `codex exec --json` logs by event type: `turn.completed` means success, `turn.failed` means failure, and shell readers must handle a final line without trailing newline or they can miss the outcome event.
+- Verification runs use `prompt-verifier.md`; verifier result comes from Codex `-o` last-message output with `<verification>PASS</verification>` or `<verification>FAIL</verification>`, while `--verify same-session` resumes worker session and `--verify new-session` starts fresh.
 - Prompt migrations in `prompt-codex.md` should be covered by shell regressions that assert mocked Codex stdin contains required worker instructions and does not contain stale PRD-selection text.
 - In `flowchart/src/App.tsx`, avoid render-time reads of `ref.current`; React compiler lint also expects callbacks that touch a ref object to list that ref in the `useCallback` dependency array.
 
@@ -75,4 +76,15 @@
   - Patterns discovered: test prompt changes through mocked Codex stdin so one shell regression covers both `ralph.sh` task wrapper text and `prompt-codex.md` content.
   - Gotchas encountered: `eslint-plugin-react-hooks` in `flowchart` flags both render-time `ref.current` reads and missing ref objects in `useCallback` dependency arrays.
   - Useful context: worker prompt now assumes Ralph already chose task and that all task mutations must go through `backlog task edit`, not direct task file edits.
+---
+
+## 2026-04-16 01:22:59 CEST - US-007
+- Implemented verification mode plumbing in `ralph.sh`: `--verify` now accepts `none`, `same-session`, and `new-session`, with verifier runs using separate `prompt-verifier.md` instructions and explicit verification markers from Codex last-message output.
+- Expanded `tests/ralph-runtime.sh` with multi-invocation Codex mocks covering invalid verify mode rejection, verifier-disable mode, same-session reuse, new-session verification startup, and verifier rejection handling.
+- Updated reusable guidance in `AGENTS.md` and durable notes in `basic-memory/testing/Ralph Shell Runtime Tests.md`.
+- Files changed: `ralph.sh`, `prompt-verifier.md`, `tests/ralph-runtime.sh`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
+- **Learnings for future iterations:**
+  - Patterns discovered: verifier review outcome should travel through Codex `-o` last-message output so review rejection stays separate from JSONL runtime failure.
+  - Gotchas encountered: shell mocks for multi-pass Codex flows need per-invocation args/stdin capture plus mocked `-o` file writes, or verifier assertions silently see worker state.
+  - Useful context: `same-session` verification keeps worker session id for later resume, while `new-session` captures a fresh verifier session id without rewriting assignee yet.
 ---

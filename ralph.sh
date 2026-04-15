@@ -141,6 +141,26 @@ write_task_session_assignee() {
   fi
 }
 
+extract_verification_status() {
+  local verifier_output="$1"
+
+  if [[ "$verifier_output" == *"<verification>PASS</verification>"* ]]; then
+    printf 'PASS\n'
+    return 0
+  fi
+
+  if [[ "$verifier_output" == *"<verification>FAIL</verification>"* ]]; then
+    printf 'FAIL\n'
+    return 0
+  fi
+
+  return 1
+}
+
+extract_verification_notes() {
+  printf '%s\n' "$1" | sed '/<verification>PASS<\/verification>/d;/<verification>FAIL<\/verification>/d;/^[[:space:]]*$/d'
+}
+
 extract_codex_thread_id_from_run_log() {
   local run_file="$1"
   local line
@@ -156,7 +176,7 @@ extract_codex_thread_id_from_run_log() {
   return 1
 }
 
-extract_codex_turn_failure_from_run_log() {
+extract_turn_failure_from_run_log() {
   local run_file="$1"
   local line
 
@@ -279,7 +299,8 @@ run_codex(){
   local task_id="$1"
   local prompt="$2"
   local run_file="$3"
-  local session_id="${4:-}"
+  local run_kind="${4:-worker}"
+  local session_id="${5:-}"
 
   local last_message_file="/tmp/$(date -u '+ralph-last-message-%s.txt')"
   local cmd
@@ -293,16 +314,61 @@ run_codex(){
 
   if ! printf '%s' "$prompt" | "${cmd[@]}" > "$run_file"; then
     if [[ -n "$session_id" ]]; then
-      die "failed to resume Codex worker for task '$task_id'. Check '$run_file' for details."
+      die "failed to resume Codex $run_kind for task '$task_id'. Check '$run_file' for details."
     fi
-    die "failed to start Codex worker for task '$task_id'. Check '$run_file' for details."
+    die "failed to start Codex $run_kind for task '$task_id'. Check '$run_file' for details."
   fi
   cat "$last_message_file" 2>/dev/null || true
+}
+
+run_codex_verification() {
+  local task_id="$1"
+  local task_plain="$2"
+  local worker_session_id="$3"
+  local verifier_prompt_template verifier_prompt verifier_run_file verifier_output
+  local verifier_session_id verification_status verification_notes turn_failure
+
+  verifier_prompt_template="$(cat "$SCRIPT_DIR/prompt-verifier.md")"
+  verifier_prompt=$(printf 'Assigned backlog task from `backlog task %s --plain`:\n\n%s\n\n%s' "$task_id" "$task_plain" "$verifier_prompt_template")
+  verifier_run_file="$SCRIPT_DIR/runs/$(date -u '+ralph-verify-%s.jsonl')"
+  verifier_session_id=""
+
+  if [[ "$VERIFY_MODE" == "same-session" ]]; then
+    verifier_session_id="$worker_session_id"
+  fi
+
+  verifier_output="$(run_codex "$task_id" "$verifier_prompt" "$verifier_run_file" "verifier" "$verifier_session_id")"
+
+  if [[ -z "$verifier_session_id" ]]; then
+    verifier_session_id="$(extract_codex_thread_id_from_run_log "$verifier_run_file" || true)"
+    [[ -n "$verifier_session_id" ]] || die "failed to capture Codex verification session id for task '$task_id'"
+  fi
+
+  turn_failure="$(extract_turn_failure_from_run_log "$verifier_run_file" || true)"
+  if [[ -n "$turn_failure" ]]; then
+    die "Codex verifier runtime failed for task '$task_id': $turn_failure"
+  fi
+
+  if ! run_log_has_turn_completed "$verifier_run_file"; then
+    die "Codex verifier ended without a clear outcome for task '$task_id'"
+  fi
+
+  verification_status="$(extract_verification_status "$verifier_output" || true)"
+  [[ -n "$verification_status" ]] || die "Codex verifier ended without a verification result for task '$task_id'"
+
+  log "Using Codex verification session $verifier_session_id for task $task_id"
+
+  if [[ "$verification_status" == "FAIL" ]]; then
+    verification_notes="$(extract_verification_notes "$verifier_output")"
+    [[ -n "$verification_notes" ]] || verification_notes="verification failed"
+    die "Codex verifier rejected task '$task_id': $verification_notes"
+  fi
 }
 
 # Parse arguments
 TOOL="codex"
 MAX_ITERATIONS="10"
+VERIFY_MODE="${RALPH_VERIFY_MODE:-none}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -333,12 +399,21 @@ while [[ $# -gt 0 ]]; do
       append_sequence_file "${1#*=}"
       shift
       ;;
+    --verify)
+      [[ $# -ge 2 ]] || die "missing value for --verify"
+      VERIFY_MODE="$2"
+      shift 2
+      ;;
+    --verify=*)
+      VERIFY_MODE="${1#*=}"
+      shift
+      ;;
     *)
       if [[ "$1" =~ ^[0-9]+$ ]]; then
         MAX_ITERATIONS="$1"
         shift
       else
-        die "usage: ./ralph.sh [--tool codex] [--sequence task-1,task-2] [--sequence-file path] [max_iterations]"
+        die "usage: ./ralph.sh [--tool codex] [--sequence task-1,task-2] [--sequence-file path] [--verify none|same-session|new-session] [max_iterations]"
       fi
       ;;
   esac
@@ -348,6 +423,14 @@ done
 if [[ "$TOOL" != "codex" ]]; then
   die "Invalid tool '$TOOL'. Must be 'codex'."
 fi
+
+case "$VERIFY_MODE" in
+  none|same-session|new-session)
+    ;;
+  *)
+    die "Invalid verify mode '$VERIFY_MODE'. Must be one of: none, same-session, new-session."
+    ;;
+esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -403,7 +486,7 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   prompt_template="$(cat "$SCRIPT_DIR/prompt-codex.md")"
   prompt=$(printf 'Assigned backlog task from `backlog task %s --plain`:\n\n%s\n\n%s' "$task_id" "$task_plain" "$prompt_template")
   run_file="$SCRIPT_DIR/runs/$(date -u '+ralph-run-%s.jsonl')"
-  OUTPUT=$(run_codex "$task_id" "$prompt" "$run_file" "$session_id")
+  OUTPUT=$(run_codex "$task_id" "$prompt" "$run_file" "worker" "$session_id")
 
   if [[ -z "$session_id" ]]; then
     session_id="$(extract_codex_thread_id_from_run_log "$run_file" || true)"
@@ -411,7 +494,7 @@ for i in $(seq 1 $MAX_ITERATIONS); do
     write_task_session_assignee "$task_id" "$session_id"
   fi
 
-  turn_failure="$(extract_codex_turn_failure_from_run_log "$run_file" || true)"
+  turn_failure="$(extract_turn_failure_from_run_log "$run_file" || true)"
   if [[ -n "$turn_failure" ]]; then
     die "Codex worker reported failure for task '$task_id': $turn_failure"
   fi
@@ -421,6 +504,10 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   fi
 
   log "Using Codex session $session_id for task $task_id"
+
+  if [[ "$VERIFY_MODE" != "none" ]]; then
+    run_codex_verification "$task_id" "$task_plain" "$session_id"
+  fi
   
   # Check for completion signal
   if echo "$OUTPUT" | grep -q "<promise>COMPLETE</promise>"; then

@@ -29,19 +29,56 @@ setup_fixture() {
 
   cp "$REPO_ROOT/ralph.sh" "$fixture/ralph.sh"
   cp "$REPO_ROOT/prompt-codex.md" "$fixture/prompt-codex.md"
+  cp "$REPO_ROOT/prompt-verifier.md" "$fixture/prompt-verifier.md"
   mkdir -p "$fixture/bin"
 
   cat > "$fixture/bin/codex" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "$*" > "${TMPDIR:-/tmp}/ralph-codex-args.txt"
-cat > "${TMPDIR:-/tmp}/ralph-codex-stdin.txt"
-if [[ -n "${MOCK_CODEX_OUTPUT:-}" ]]; then
-  printf '%s' "$MOCK_CODEX_OUTPUT"
-elif [[ "${MOCK_CODEX_SUPPRESS_OUTPUT:-0}" != "1" ]]; then
+set -euo pipefail
+
+tmp_root="${TMPDIR:-/tmp}"
+count_file="$tmp_root/ralph-codex-call-count"
+call_count=0
+if [[ -f "$count_file" ]]; then
+  call_count="$(cat "$count_file")"
+fi
+call_count=$((call_count + 1))
+printf '%s\n' "$call_count" > "$count_file"
+
+printf '%s\n' "$*" > "$tmp_root/ralph-codex-args.txt"
+printf '%s\n' "$*" > "$tmp_root/ralph-codex-args-$call_count.txt"
+cat > "$tmp_root/ralph-codex-stdin.txt"
+cp "$tmp_root/ralph-codex-stdin.txt" "$tmp_root/ralph-codex-stdin-$call_count.txt"
+
+output_file=""
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  if [[ "${args[$i]}" == "-o" && $((i + 1)) -lt ${#args[@]} ]]; then
+    output_file="${args[$((i + 1))]}"
+    break
+  fi
+done
+
+output_var="MOCK_CODEX_OUTPUT_$call_count"
+suppress_var="MOCK_CODEX_SUPPRESS_OUTPUT_$call_count"
+exit_var="MOCK_CODEX_EXIT_$call_count"
+last_message_var="MOCK_CODEX_LAST_MESSAGE_$call_count"
+output_value="${!output_var:-${MOCK_CODEX_OUTPUT:-}}"
+suppress_value="${!suppress_var:-${MOCK_CODEX_SUPPRESS_OUTPUT:-0}}"
+exit_value="${!exit_var:-${MOCK_CODEX_EXIT:-0}}"
+last_message_value="${!last_message_var:-${MOCK_CODEX_LAST_MESSAGE:-}}"
+
+if [[ -n "$output_file" ]]; then
+  printf '%s' "$last_message_value" > "$output_file"
+fi
+
+if [[ -n "$output_value" ]]; then
+  printf '%s' "$output_value"
+elif [[ "$suppress_value" != "1" ]]; then
   printf '%s\n' '{"type":"thread.started","thread_id":"mock-session-123"}'
   printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}'
 fi
-exit "${MOCK_CODEX_EXIT:-0}"
+exit "$exit_value"
 EOF
   chmod +x "$fixture/bin/codex"
 
@@ -112,7 +149,7 @@ EOF
   chmod +x "$fixture/bin/sleep"
 
   local cmd
-  for cmd in bash cat date dirname grep mkdir sed seq tee tr; do
+  for cmd in bash cat cp date dirname grep mkdir sed seq tee tr; do
     ln -s "$(command -v "$cmd")" "$fixture/bin/$cmd"
   done
 
@@ -167,6 +204,18 @@ test_rejects_claude() {
 
   [[ $status -ne 0 ]] || fail "expected --tool claude to fail"
   assert_contains "$output" "Invalid tool 'claude'. Must be 'codex'."
+}
+
+test_rejects_invalid_verify_mode() {
+  local output status
+
+  set +e
+  output="$(cd "$REPO_ROOT" && bash ./ralph.sh --verify broken 1 2>&1)"
+  status=$?
+  set -e
+
+  [[ $status -ne 0 ]] || fail "expected invalid --verify value to fail"
+  assert_contains "$output" "Invalid verify mode 'broken'. Must be one of: none, same-session, new-session."
 }
 
 test_runs_without_prd_or_jq() {
@@ -410,8 +459,98 @@ test_passes_task_scoped_worker_prompt_to_codex() {
   assert_contains "$codex_input" 'Use `backlog task edit <id> --final-summary`'
 }
 
+test_verification_none_skips_verifier_pass() {
+  local fixture output status codex_input
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - No verify task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - No verify task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" --verify none 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  codex_input="$(cat "$fixture/tmp/ralph-codex-stdin-1.txt")"
+  assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
+  assert_contains "$codex_input" '# Ralph Codex Worker Instructions'
+  [[ ! -f "$fixture/tmp/ralph-codex-stdin-2.txt" ]] || fail "expected verifier pass to stay disabled in --verify none mode"
+}
+
+test_same_session_verification_reuses_worker_session() {
+  local fixture output status verifier_args verifier_input
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Same session verify'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Same session verify\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(MOCK_CODEX_OUTPUT_1=$'{"type":"thread.started","thread_id":"worker-session-123"}\n{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}' MOCK_CODEX_OUTPUT_2=$'{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}' MOCK_CODEX_LAST_MESSAGE_2=$'<verification>PASS</verification>\nVerifier pass.' run_script "$fixture" --verify same-session 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  verifier_args="$(cat "$fixture/tmp/ralph-codex-args-2.txt")"
+  verifier_input="$(cat "$fixture/tmp/ralph-codex-stdin-2.txt")"
+  assert_contains "$output" "Using Codex verification session worker-session-123 for task task-1"
+  assert_contains "$verifier_args" "exec"
+  assert_contains "$verifier_args" "resume"
+  assert_contains "$verifier_args" "worker-session-123"
+  assert_contains "$verifier_input" '# Ralph Codex Verifier Instructions'
+}
+
+test_new_session_verification_uses_fresh_verifier_session() {
+  local fixture output status verifier_args verifier_input
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - New session verify'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - New session verify\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(MOCK_CODEX_OUTPUT_1=$'{"type":"thread.started","thread_id":"worker-session-123"}\n{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}' MOCK_CODEX_OUTPUT_2=$'{"type":"thread.started","thread_id":"verifier-session-456"}\n{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}' MOCK_CODEX_LAST_MESSAGE_2=$'<verification>PASS</verification>\nVerifier pass.' run_script "$fixture" --verify new-session 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  verifier_args="$(cat "$fixture/tmp/ralph-codex-args-2.txt")"
+  verifier_input="$(cat "$fixture/tmp/ralph-codex-stdin-2.txt")"
+  assert_contains "$output" "Using Codex verification session verifier-session-456 for task task-1"
+  assert_contains "$verifier_args" "exec"
+  assert_not_contains "$verifier_args" "resume"
+  assert_contains "$verifier_input" '# Ralph Codex Verifier Instructions'
+}
+
+test_fails_when_verifier_rejects_task() {
+  local fixture output status edited_task
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Verify fail task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Verify fail task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(MOCK_CODEX_OUTPUT_1=$'{"type":"thread.started","thread_id":"worker-session-123"}\n{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}' MOCK_CODEX_OUTPUT_2=$'{"type":"thread.started","thread_id":"verifier-session-456"}\n{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}' MOCK_CODEX_LAST_MESSAGE_2=$'<verification>FAIL</verification>\nReview notes: missing regression coverage.' run_script "$fixture" --verify new-session 1)"
+  status=$?
+  set -e
+
+  [[ $status -ne 0 ]] || fail "expected verifier rejection to fail"
+  assert_contains "$output" "Codex verifier rejected task 'task-1': Review notes: missing regression coverage."
+  edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
+  assert_contains "$edited_task" "Status: ○ In Progress"
+  assert_contains "$edited_task" "Assignee: codex@worker-session-123"
+}
+
 test_rejects_amp
 test_rejects_claude
+test_rejects_invalid_verify_mode
 test_runs_without_prd_or_jq
 test_selects_highest_priority_dependency_ready_todo
 test_sequence_cli_uses_explicit_order
@@ -423,5 +562,9 @@ test_resumes_prior_session_from_assignee_metadata
 test_fails_when_worker_reports_turn_failed
 test_fails_when_worker_outcome_is_unclear
 test_passes_task_scoped_worker_prompt_to_codex
+test_verification_none_skips_verifier_pass
+test_same_session_verification_reuses_worker_session
+test_new_session_verification_uses_fresh_verifier_session
+test_fails_when_verifier_rejects_task
 
 printf 'PASS: ralph runtime\n'

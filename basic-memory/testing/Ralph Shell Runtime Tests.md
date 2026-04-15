@@ -36,3 +36,5 @@ Likely future searches this note should answer: "how to test ralph.sh without re
 - relates_to [[Ralph Backlog Loop Design Spec]]
 - relates_to [[Ralph Backlog Loop Design Decisions]]
 - relates_to [[Ralph Agent Instructions]]
+- [pattern] Verification runs should use a verifier-specific prompt and return `<verification>PASS</verification>` or `<verification>FAIL</verification>` through Codex last-message output so shell orchestration can distinguish review rejection from runtime failure #verification #prompt
+- [pattern] `--verify same-session` should resume the worker session for verification, while `--verify new-session` should start a fresh Codex session and parse its own `thread.started` id #verification #session
