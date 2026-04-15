@@ -1,0 +1,5 @@
+# Codebase Patterns
+
+---
+
+# Progress Logs

@@ -12,8 +12,11 @@ progress.txt
 #Claude
 .claude/
 
-tools/ralph/
+tools/ralph/*
 !tools/ralph/progress.md
 !tools/ralph/prd.json
 
 .codex/config.toml
+
+logs.txt
+*.log

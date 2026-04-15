@@ -39,7 +39,10 @@ These decisions materially change the architecture: `ralph.sh` becomes responsib
 - [question] Exact status name for verifier-rejected tasks is still unresolved
 - [decision] Codex resumable session identity should be stored in Backlog task assignee using `<agent>@<session_id>` format
 - [impact] Ralph can recover resumable agent context directly from backlog task metadata without a separate local state file
+- [decision] The `backlog/` root in this repo is scaffolding to enable Backlog CLI commands; the project does not yet use backlog-driven runtime orchestration
+- [decision] This project stays on the old loop until the user explicitly approves the switch to the backlog-driven loop
+- [decision] Prep scripts may configure future loop pieces, including `Review Failed` status support, before the runtime switch happens
 
 ## Relations
 - relates_to [[Ralph Agent Instructions]]
-- relates_to [[Backlog.md CLI Usage]]
+- relates_to [[Task Workflow]]

@@ -6,11 +6,19 @@ Ralph is an autonomous AI agent loop that runs AI coding tools (Codex, Amp or Cl
 
 ## Preliminary
 - NEVER use `codex` CLI. Mock it for tests.
+- NEVER read or touch tools/ralph/ralph.sh or tools/ralph/prompt-codex.md
 - Use `caveman:full` style to talk with user, write docs and tasks.
-- Use `basic-memory` as knowledge base (project: `video-annotator`). Search and write durable notes (use `memory-*` skills).
+- Use `basic-memory` as knowledge base (project: `ralph-backlog`). Search and write durable notes.
 - Make no assumptions. If notes/docs do not answer, ask user and record answer.
 - When user corrects you or you solve hard problem, write note.
 - If doc too long or information hard to find, write note.
+
+## Basic Memory
+- Before searching or writing note, read relevant `memory-*` skill
+- Information you expected to find in a note is missing -> add it once you have the answer.
+- Learned something took significant effort -> save that knowledge in a note.
+- Before writing note, ask: “Useful for future work, or only relevant to the current task?”
+- When writing note, think about how you would search for it later. Include 2–3 likely search queries and write note so it answers them.
 
 ## Commands
 
@@ -111,8 +119,3 @@ A task is done only if:
 - Struggles, user corrections, and impactful decisions recorded
 
 ## Patterns
-
-- Each iteration spawns a fresh AI instance (Codex, Amp or Claude Code) with clean context
-- Memory persists via git history, `progress.md`, and `prd.json`
-- Stories should be small enough to complete in one context window
-- Always update AGENTS.md with discovered patterns for future iterations
