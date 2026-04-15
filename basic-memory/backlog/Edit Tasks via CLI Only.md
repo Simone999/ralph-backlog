@@ -3,7 +3,6 @@ title: Edit Tasks via CLI Only
 type: note
 permalink: ralph-backlog/backlog/edit-tasks-via-cli-only
 tags:
-- ralph
 - backlog
 - cli
 - editing

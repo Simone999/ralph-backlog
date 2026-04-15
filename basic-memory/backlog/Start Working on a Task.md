@@ -3,7 +3,6 @@ title: Start Working on a Task
 type: note
 permalink: ralph-backlog/backlog/start-working-on-a-task
 tags:
-- ralph
 - backlog
 - workflow
 - status

@@ -3,7 +3,6 @@ title: Final Summary
 type: note
 permalink: ralph-backlog/backlog/final-summary
 tags:
-- ralph
 - backlog
 - final-summary
 - pr-description

@@ -3,7 +3,6 @@ title: Board, Browser, and Reports
 type: note
 permalink: ralph-backlog/backlog/board-browser-and-reports
 tags:
-- ralph
 - backlog
 - board
 - browser

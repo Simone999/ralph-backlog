@@ -3,7 +3,6 @@ title: Common Task Problems
 type: note
 permalink: ralph-backlog/backlog/common-task-problems
 tags:
-- ralph
 - backlog
 - troubleshooting
 - task

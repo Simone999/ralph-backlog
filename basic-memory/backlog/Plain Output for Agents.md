@@ -3,7 +3,6 @@ title: Plain Output for Agents
 type: note
 permalink: ralph-backlog/backlog/plain-output-for-agents
 tags:
-- ralph
 - backlog
 - plain
 - cli

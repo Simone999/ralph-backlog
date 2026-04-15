@@ -3,7 +3,6 @@ title: Task File Locations
 type: note
 permalink: ralph-backlog/backlog/task-file-locations
 tags:
-- ralph
 - backlog
 - files
 - paths

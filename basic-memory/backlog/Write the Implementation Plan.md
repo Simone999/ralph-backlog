@@ -3,7 +3,6 @@ title: Write the Implementation Plan
 type: note
 permalink: ralph-backlog/backlog/write-the-implementation-plan
 tags:
-- ralph
 - backlog
 - plan
 - implementation

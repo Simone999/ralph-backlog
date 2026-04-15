@@ -1,9 +1,8 @@
 ---
 title: Ralph Backlog Loop Design Spec
 type: note
-permalink: ralph-annotator/specs/ralph-backlog-loop-design-spec
+permalink: ralph-backlog/specs/ralph-backlog-loop-design-spec
 tags:
-- ralph
 - backlog
 - design
 - spec

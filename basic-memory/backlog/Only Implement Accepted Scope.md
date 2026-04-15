@@ -3,7 +3,6 @@ title: Only Implement Accepted Scope
 type: note
 permalink: ralph-backlog/backlog/only-implement-accepted-scope
 tags:
-- ralph
 - backlog
 - scope
 - acceptance-criteria

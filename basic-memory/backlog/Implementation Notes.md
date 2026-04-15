@@ -3,7 +3,6 @@ title: Implementation Notes
 type: note
 permalink: ralph-backlog/backlog/implementation-notes
 tags:
-- ralph
 - backlog
 - notes
 - progress

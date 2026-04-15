@@ -3,7 +3,6 @@ title: Checklist Commands
 type: note
 permalink: ralph-backlog/backlog/checklist-commands
 tags:
-- ralph
 - backlog
 - checklist
 - acceptance-criteria

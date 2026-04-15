@@ -3,7 +3,6 @@ title: Good Acceptance Criteria
 type: note
 permalink: ralph-backlog/backlog/good-acceptance-criteria
 tags:
-- ralph
 - backlog
 - acceptance-criteria
 - quality

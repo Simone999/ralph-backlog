@@ -3,7 +3,6 @@ title: Task Metadata Commands
 type: note
 permalink: ralph-backlog/backlog/task-metadata-commands
 tags:
-- ralph
 - backlog
 - cli
 - metadata

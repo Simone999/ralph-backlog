@@ -3,7 +3,6 @@ title: Definition of Done
 type: note
 permalink: ralph-backlog/backlog/definition-of-done
 tags:
-- ralph
 - backlog
 - done
 - definition-of-done

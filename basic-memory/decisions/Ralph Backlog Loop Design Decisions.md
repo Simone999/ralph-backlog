@@ -1,9 +1,8 @@
 ---
 title: Ralph Backlog Loop Design Decisions
 type: note
-permalink: ralph-annotator/decisions/ralph-backlog-loop-design-decisions
+permalink: ralph-backlog/decisions/ralph-backlog-loop-design-decisions
 tags:
-- ralph
 - backlog
 - automation
 - design

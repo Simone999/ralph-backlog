@@ -3,7 +3,6 @@ title: Task Workflow
 type: note
 permalink: ralph-backlog/backlog/task-workflow
 tags:
-- ralph
 - backlog
 - workflow
 - index

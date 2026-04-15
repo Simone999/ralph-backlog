@@ -3,7 +3,6 @@ title: Multiline CLI Input
 type: note
 permalink: ralph-backlog/backlog/multiline-cli-input
 tags:
-- ralph
 - backlog
 - cli
 - multiline

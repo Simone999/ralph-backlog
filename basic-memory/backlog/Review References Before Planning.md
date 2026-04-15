@@ -3,7 +3,6 @@ title: Review References Before Planning
 type: note
 permalink: ralph-backlog/backlog/review-references-before-planning
 tags:
-- ralph
 - backlog
 - references
 - documentation

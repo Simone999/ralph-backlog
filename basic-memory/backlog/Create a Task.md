@@ -3,7 +3,6 @@ title: Create a Task
 type: note
 permalink: ralph-backlog/backlog/create-a-task
 tags:
-- ralph
 - backlog
 - task
 - creation

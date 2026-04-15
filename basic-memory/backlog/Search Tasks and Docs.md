@@ -3,7 +3,6 @@ title: Search Tasks and Docs
 type: note
 permalink: ralph-backlog/backlog/search-tasks-and-docs
 tags:
-- ralph
 - backlog
 - search
 - retrieval
