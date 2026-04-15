@@ -3,7 +3,6 @@ title: Ralph Shell Runtime Tests
 type: note
 permalink: ralph-backlog/testing/ralph-shell-runtime-tests
 tags:
-- ralph
 - testing
 - shell
 ---
@@ -17,6 +16,9 @@ This lets tests verify CLI behavior, runtime control flow, and required-command 
 Likely future searches this note should answer: "how to test ralph.sh without real codex", "why does ralph runtime test remove jq", and "where are shell tests for codex-only loop".
 
 ## Observations
+- [pattern] Session-metadata runtime tests should mock `backlog task edit` and assert selected task is claimed as `In Progress` with `codex@<session_id>` before the Codex boundary runs #backlog #session #testing
+- [reason] Reloading `backlog task <id> --plain` after metadata edits keeps worker prompt text aligned with current assignee and status #backlog #prompt
+
 - [pattern] `ralph.sh` regression tests can run as plain shell scripts under `tests/` with `bash tests/ralph-runtime.sh` #ralph #testing
 - [pattern] Mock external CLIs by prepending fixture-local executables to `PATH` instead of patching global environment #shell #mocking
 - [guard] Leaving `jq` out of fixture `PATH` catches accidental fallback to old PRD-driven runtime logic #prd #shell

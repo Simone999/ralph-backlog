@@ -96,6 +96,49 @@ extract_task_dependencies() {
   return 1
 }
 
+extract_task_assignee() {
+  local line
+  while IFS= read -r line; do
+    if [[ "$line" == Assignee:* ]]; then
+      printf '%s\n' "${line#Assignee: }"
+      return 0
+    fi
+  done <<< "$1"
+  return 1
+}
+
+extract_codex_session_id() {
+  local assignee="${1:-}"
+  if [[ "$assignee" =~ ^codex@([^[:space:]]+)$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
+
+generate_session_id() {
+  local task_id="$1"
+  printf '%s\n' "$(date -u "+%s")-$$-$task_id"
+}
+
+claim_task_session() {
+  local task_id="$1"
+  local task_plain="$2"
+  local assignee session_id
+
+  assignee="$(extract_task_assignee "$task_plain" || true)"
+  session_id="$(extract_codex_session_id "$assignee" || true)"
+  if [[ -z "$session_id" ]]; then
+    session_id="$(generate_session_id "$task_id")"
+  fi
+
+  if ! backlog task edit "$task_id" -s "In Progress" -a "codex@$session_id" >/dev/null; then
+    die "failed to update backlog metadata for task '$task_id'"
+  fi
+
+  printf '%s\n' "$session_id"
+}
+
 dependencies_satisfied() {
   local task_plain dependency_line dependency dep_plain dep_status
   task_plain="$1"
@@ -276,6 +319,9 @@ log "Starting Ralph - Tool: $TOOL - Max iterations: $MAX_ITERATIONS"
 
 for i in $(seq 1 $MAX_ITERATIONS); do
   task_id="$(select_next_task "$((i - 1))")"
+  task_plain="$(load_task_plain "$task_id")"
+  session_id="$(claim_task_session "$task_id" "$task_plain")"
+  log "Using Codex session $session_id for task $task_id"
   task_plain="$(load_task_plain "$task_id")"
 
   echo ""

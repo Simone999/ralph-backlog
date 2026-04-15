@@ -46,6 +46,39 @@ if [[ "${1:-}" == "task" && "${2:-}" == "list" ]]; then
   exit 0
 fi
 
+if [[ "${1:-}" == "task" && "${2:-}" == "edit" && -n "${3:-}" ]]; then
+  task_id="${3,,}"
+  task_file="$mock_dir/${task_id}.txt"
+  [[ -f "$task_file" ]] || exit 1
+  shift 3
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -s)
+        status="$2"
+        shift 2
+        sed -i "s/^Status: .*/Status: ○ $status/" "$task_file"
+        ;;
+      -a)
+        assignee="$2"
+        shift 2
+        if grep -q '^Assignee:' "$task_file"; then
+          sed -i "s/^Assignee: .*/Assignee: $assignee/" "$task_file"
+        else
+          printf '\nAssignee: %s\n' "$assignee" >> "$task_file"
+        fi
+        ;;
+      *)
+        printf 'unexpected backlog edit args: %s\n' "$*" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  printf '%s\n' "$(cat "$task_file")" > "$mock_dir/last-edited-task.txt"
+  exit 0
+fi
+
 if [[ "${1:-}" == "task" && -n "${2:-}" ]]; then
   task_id="${2,,}"
   task_file="$mock_dir/${task_id}.txt"
@@ -228,6 +261,47 @@ test_sequence_missing_task_fails_fast() {
   [[ ! -f "$fixture/tmp/ralph-codex-stdin.txt" ]] || fail "expected codex not to run when sequence task is missing"
 }
 
+test_marks_fresh_task_in_progress_and_writes_codex_assignee() {
+  local fixture output status edited_task
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Fresh task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Fresh task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
+  assert_contains "$edited_task" "Status: ○ In Progress"
+  assert_contains "$edited_task" "Assignee: codex@"
+}
+
+test_resumes_prior_session_from_assignee_metadata() {
+  local fixture output status edited_task
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [LOW] TASK-9 - Other task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Resume task\n==================================================\n\nStatus: ○ In Progress\nAssignee: codex@resume-123\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" --sequence task-1 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
+  assert_contains "$output" "Using Codex session resume-123 for task task-1"
+  assert_contains "$edited_task" "Status: ○ In Progress"
+  assert_contains "$edited_task" "Assignee: codex@resume-123"
+}
+
 test_rejects_amp
 test_rejects_claude
 test_runs_without_prd_or_jq
@@ -235,5 +309,7 @@ test_selects_highest_priority_dependency_ready_todo
 test_sequence_cli_uses_explicit_order
 test_sequence_file_uses_explicit_order
 test_sequence_missing_task_fails_fast
+test_marks_fresh_task_in_progress_and_writes_codex_assignee
+test_resumes_prior_session_from_assignee_metadata
 
 printf 'PASS: ralph runtime\n'
