@@ -5,6 +5,7 @@
 Ralph is an autonomous AI agent loop that runs AI coding tools (Codex, Amp or Claude Code) repeatedly until all PRD items are complete. Each iteration is a fresh instance with clean context.
 
 ## Preliminary
+- NEVER use `codex` CLI. Mock it for tests.
 - Use `caveman:full` style to talk with user, write docs and tasks.
 - Use `basic-memory` as knowledge base (project: `video-annotator`). Search and write durable notes (use `memory-*` skills).
 - Make no assumptions. If notes/docs do not answer, ask user and record answer.
