@@ -27,10 +27,40 @@ setup_fixture() {
   cat > "$fixture/bin/codex" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "${TMPDIR:-/tmp}/ralph-codex-args.txt"
-cat > /dev/null
-exit 0
+cat > "${TMPDIR:-/tmp}/ralph-codex-stdin.txt"
+if [[ -n "${MOCK_CODEX_OUTPUT:-}" ]]; then
+  printf '%s' "$MOCK_CODEX_OUTPUT"
+fi
+exit "${MOCK_CODEX_EXIT:-0}"
 EOF
   chmod +x "$fixture/bin/codex"
+
+  cat > "$fixture/bin/backlog" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+mock_dir="${MOCK_BACKLOG_DIR:?}"
+
+if [[ "${1:-}" == "task" && "${2:-}" == "list" ]]; then
+  cat "$mock_dir/task-list.txt"
+  exit 0
+fi
+
+if [[ "${1:-}" == "task" && -n "${2:-}" ]]; then
+  task_id="${2,,}"
+  task_file="$mock_dir/${task_id}.txt"
+  if [[ -f "$task_file" ]]; then
+    cat "$task_file"
+  else
+    printf 'Task %s not found.\n' "$2"
+  fi
+  exit 0
+fi
+
+printf 'unexpected backlog args: %s\n' "$*" >&2
+exit 1
+EOF
+  chmod +x "$fixture/bin/backlog"
 
   cat > "$fixture/bin/sleep" <<'EOF'
 #!/usr/bin/env bash
@@ -39,10 +69,11 @@ EOF
   chmod +x "$fixture/bin/sleep"
 
   local cmd
-  for cmd in bash cat date dirname grep mkdir sed seq tee; do
+  for cmd in bash cat date dirname grep mkdir sed seq tee tr; do
     ln -s "$(command -v "$cmd")" "$fixture/bin/$cmd"
   done
 
+  mkdir -p "$fixture/mock-backlog"
   printf '%s\n' "$fixture"
 }
 
@@ -52,8 +83,23 @@ run_script() {
 
   (
     cd "$fixture"
-    PATH="$fixture/bin" TMPDIR="$fixture/tmp" bash ./ralph.sh "$@"
+    PATH="$fixture/bin" TMPDIR="$fixture/tmp" MOCK_BACKLOG_DIR="$fixture/mock-backlog" bash ./ralph.sh "$@"
   ) 2>&1
+}
+
+write_task_list() {
+  local fixture="$1"
+  local content="$2"
+
+  printf '%s\n' "$content" > "$fixture/mock-backlog/task-list.txt"
+}
+
+write_task_plain() {
+  local fixture="$1"
+  local task_id="$2"
+  local content="$3"
+
+  printf '%s\n' "$content" > "$fixture/mock-backlog/${task_id}.txt"
 }
 
 test_rejects_amp() {
@@ -86,6 +132,8 @@ test_runs_without_prd_or_jq() {
   fixture="$(setup_fixture)"
   trap 'rm -rf "$fixture"' RETURN
   mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [LOW] TASK-1 - Low todo'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Low todo\n==================================================\n\nStatus: ○ To Do\nPriority: Low\nCreated: 2026-04-16 00:00'
 
   set +e
   output="$(run_script "$fixture" 1)"
@@ -97,8 +145,95 @@ test_runs_without_prd_or_jq() {
   assert_contains "$output" "Ralph reached max iterations (1) without completing all tasks."
 }
 
+test_selects_highest_priority_dependency_ready_todo() {
+  local fixture output status codex_input
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-2 - High blocked\n  [MEDIUM] TASK-3 - Medium todo\n  [LOW] TASK-1 - Low todo'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Low todo\n==================================================\n\nStatus: ○ To Do\nPriority: Low\nCreated: 2026-04-16 00:00'
+  write_task_plain "$fixture" "task-2" $'File: mock/task-2.md\n\nTask TASK-2 - High blocked\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00\nDependencies: TASK-1'
+  write_task_plain "$fixture" "task-3" $'File: mock/task-3.md\n\nTask TASK-3 - Medium todo\n==================================================\n\nStatus: ○ To Do\nPriority: Medium\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  codex_input="$(cat "$fixture/tmp/ralph-codex-stdin.txt")"
+  assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
+  assert_contains "$codex_input" "Task TASK-3 - Medium todo"
+}
+
+test_sequence_cli_uses_explicit_order() {
+  local fixture output status codex_input
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-2 - High blocked\n  [MEDIUM] TASK-3 - Medium todo\n  [LOW] TASK-1 - Low todo'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - First forced task\n==================================================\n\nStatus: ○ To Do\nPriority: Low\nCreated: 2026-04-16 00:00'
+  write_task_plain "$fixture" "task-3" $'File: mock/task-3.md\n\nTask TASK-3 - Later forced task\n==================================================\n\nStatus: ○ To Do\nPriority: Medium\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" --sequence task-1,task-3 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  codex_input="$(cat "$fixture/tmp/ralph-codex-stdin.txt")"
+  assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
+  assert_contains "$codex_input" "Task TASK-1 - First forced task"
+}
+
+test_sequence_file_uses_explicit_order() {
+  local fixture output status codex_input
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  printf 'task-3\n' > "$fixture/sequence.txt"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-2 - High blocked\n  [MEDIUM] TASK-3 - Medium todo'
+  write_task_plain "$fixture" "task-3" $'File: mock/task-3.md\n\nTask TASK-3 - From sequence file\n==================================================\n\nStatus: ○ To Do\nPriority: Medium\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" --sequence-file "$fixture/sequence.txt" 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  codex_input="$(cat "$fixture/tmp/ralph-codex-stdin.txt")"
+  assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
+  assert_contains "$codex_input" "Task TASK-3 - From sequence file"
+}
+
+test_sequence_missing_task_fails_fast() {
+  local fixture output status
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [LOW] TASK-1 - Low todo'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Low todo\n==================================================\n\nStatus: ○ To Do\nPriority: Low\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" --sequence task-9 1)"
+  status=$?
+  set -e
+
+  [[ $status -ne 0 ]] || fail "expected missing sequence task to fail"
+  assert_contains "$output" "Sequence task 'task-9' not found in backlog."
+  [[ ! -f "$fixture/tmp/ralph-codex-stdin.txt" ]] || fail "expected codex not to run when sequence task is missing"
+}
+
 test_rejects_amp
 test_rejects_claude
 test_runs_without_prd_or_jq
+test_selects_highest_priority_dependency_ready_todo
+test_sequence_cli_uses_explicit_order
+test_sequence_file_uses_explicit_order
+test_sequence_missing_task_fails_fast
 
 printf 'PASS: ralph runtime\n'

@@ -21,6 +21,8 @@ Likely future searches this note should answer: "how to test ralph.sh without re
 - [pattern] Mock external CLIs by prepending fixture-local executables to `PATH` instead of patching global environment #shell #mocking
 - [guard] Leaving `jq` out of fixture `PATH` catches accidental fallback to old PRD-driven runtime logic #prd #shell
 - [rule] Runtime tests for Ralph should never invoke real `codex`; use a mock boundary and assert on process exit/output instead #codex #testing
+- [pattern] Backlog-driven runtime tests should mock both `backlog task list --plain` and `backlog task <id> --plain`, then assert Codex stdin contains selected task text #backlog #testing
+- [gotcha] Missing `backlog task <id> --plain` lookups may surface as text output rather than a trustworthy nonzero exit, so runtime code should validate task detail shape before treating lookup as success #backlog #cli
 
 ## Relations
 - relates_to [[Ralph Backlog Loop Design Spec]]

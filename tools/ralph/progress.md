@@ -1,5 +1,6 @@
 # Codebase Patterns
 - Shell regressions for `ralph.sh` live in `tests/ralph-runtime.sh`; mock external CLIs through `PATH` and never invoke real `codex`.
+- Backlog-driven selection tests should mock both `backlog task list --plain` and `backlog task <id> --plain`, and verify selected task text is piped into Codex stdin.
 
 ---
 
@@ -13,5 +14,16 @@
 - **Learnings for future iterations:**
   - Patterns discovered: use fixture-local `PATH` shims to mock `codex` and runtime dependencies in shell tests.
   - Gotchas encountered: omitting `jq` from fixture `PATH` is a good guard against accidental drift back to PRD-driven shell logic.
-  - Useful context: `ralph.sh` currently sends raw `prompt-codex.md`; task-scoped prompt migration still belongs to later prompt-focused stories.
+- Useful context: `ralph.sh` currently sends raw `prompt-codex.md`; task-scoped prompt migration still belongs to later prompt-focused stories.
+---
+
+## 2026-04-16 00:45:23 CEST - US-002
+- Implemented backlog task selection in `ralph.sh`: default mode now scans `To Do` tasks by priority, skips blocked work until dependencies are `Done`, validates forced sequence entries up front, and injects selected `backlog task <id> --plain` output into Codex input.
+- Expanded `tests/ralph-runtime.sh` with mocked `backlog` and Codex boundaries covering dependency-ready auto-selection, CLI/file sequence overrides, missing-task fail-fast behavior, and Codex stdin task handoff.
+- Updated reusable guidance in `AGENTS.md` and durable testing notes in `basic-memory/testing/Ralph Shell Runtime Tests.md`.
+- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
+- **Learnings for future iterations:**
+  - Patterns discovered: for backlog-driven runtime work, treat `backlog task list --plain` as candidate source and `backlog task <id> --plain` as source of truth for dependencies and task payload.
+  - Gotchas encountered: missing `backlog task <id> --plain` lookups are safer to detect by validating detail output shape, not only command exit status.
+  - Useful context: sequence overrides now support both `--sequence` and `--sequence-file`; when provided, entries are validated before Codex starts.
 ---

@@ -117,3 +117,4 @@ A task is done only if:
 - Struggles, user corrections, and impactful decisions recorded
 
 ## Patterns
+- Backlog-driven runtime selection uses `backlog task list -s "To Do" --sort priority --plain` plus `backlog task <id> --plain`; shell tests for this path should mock both commands via `PATH` and assert selected task text reaches Codex stdin.
