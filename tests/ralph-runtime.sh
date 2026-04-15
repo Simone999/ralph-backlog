@@ -89,7 +89,29 @@ set -euo pipefail
 mock_dir="${MOCK_BACKLOG_DIR:?}"
 
 if [[ "${1:-}" == "task" && "${2:-}" == "list" ]]; then
-  cat "$mock_dir/task-list.txt"
+  status="To Do"
+  shift 2
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -s)
+        status="${2:-}"
+        shift 2
+        ;;
+      --sort)
+        shift 2
+        ;;
+      --plain)
+        shift
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+
+  list_file="$mock_dir/task-list-${status// /-}.txt"
+  cat "$list_file"
   exit 0
 fi
 
@@ -180,7 +202,15 @@ write_task_list() {
   local fixture="$1"
   local content="$2"
 
-  printf '%s\n' "$content" > "$fixture/mock-backlog/task-list.txt"
+  write_task_list_for_status "$fixture" "To Do" "$content"
+}
+
+write_task_list_for_status() {
+  local fixture="$1"
+  local status="$2"
+  local content="$3"
+
+  printf '%s\n' "$content" > "$fixture/mock-backlog/task-list-${status// /-}.txt"
 }
 
 write_task_plain() {
@@ -266,6 +296,55 @@ test_selects_highest_priority_dependency_ready_todo() {
   codex_input="$(cat "$fixture/tmp/ralph-codex-stdin.txt")"
   assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
   assert_contains "$codex_input" "Task TASK-3 - Medium todo"
+}
+
+test_default_mode_ignores_review_failed_tasks() {
+  local fixture output status codex_input
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [MEDIUM] TASK-2 - Fresh todo'
+  write_task_list_for_status "$fixture" "Review Failed" $'Review Failed:\n  [HIGH] TASK-1 - Failed review task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Failed review task\n==================================================\n\nStatus: ○ Review Failed\nPriority: High\nCreated: 2026-04-16 00:00\nAssignee: codex@resume-review-123'
+  write_task_plain "$fixture" "task-2" $'File: mock/task-2.md\n\nTask TASK-2 - Fresh todo\n==================================================\n\nStatus: ○ To Do\nPriority: Medium\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  codex_input="$(cat "$fixture/tmp/ralph-codex-stdin.txt")"
+  assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
+  assert_contains "$codex_input" "Task TASK-2 - Fresh todo"
+  assert_not_contains "$codex_input" "Task TASK-1 - Failed review task"
+}
+
+test_retry_review_failed_prefers_review_failed_task() {
+  local fixture output status codex_input codex_args
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [MEDIUM] TASK-2 - Fresh todo'
+  write_task_list_for_status "$fixture" "Review Failed" $'Review Failed:\n  [HIGH] TASK-1 - Failed review task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Failed review task\n==================================================\n\nStatus: ○ Review Failed\nPriority: High\nCreated: 2026-04-16 00:00\nAssignee: codex@resume-review-123'
+  write_task_plain "$fixture" "task-2" $'File: mock/task-2.md\n\nTask TASK-2 - Fresh todo\n==================================================\n\nStatus: ○ To Do\nPriority: Medium\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" --retry-review-failed 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  codex_input="$(cat "$fixture/tmp/ralph-codex-stdin.txt")"
+  codex_args="$(cat "$fixture/tmp/ralph-codex-args.txt")"
+  assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
+  assert_contains "$codex_input" "Task TASK-1 - Failed review task"
+  assert_not_contains "$codex_input" "Task TASK-2 - Fresh todo"
+  assert_contains "$codex_args" "resume"
+  assert_contains "$codex_args" "resume-review-123"
 }
 
 test_sequence_cli_uses_explicit_order() {
@@ -562,11 +641,37 @@ test_fails_when_verifier_rejects_task() {
   assert_contains "$edited_task" "Review notes: missing regression coverage."
 }
 
+test_sequence_can_force_review_failed_task_without_retry_flag() {
+  local fixture output status codex_input codex_args
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [LOW] TASK-2 - Fresh todo'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Forced failed review task\n==================================================\n\nStatus: ○ Review Failed\nPriority: High\nCreated: 2026-04-16 00:00\nAssignee: codex@resume-review-999'
+  write_task_plain "$fixture" "task-2" $'File: mock/task-2.md\n\nTask TASK-2 - Fresh todo\n==================================================\n\nStatus: ○ To Do\nPriority: Low\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" --sequence task-1 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  codex_input="$(cat "$fixture/tmp/ralph-codex-stdin.txt")"
+  codex_args="$(cat "$fixture/tmp/ralph-codex-args.txt")"
+  assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
+  assert_contains "$codex_input" "Task TASK-1 - Forced failed review task"
+  assert_contains "$codex_args" "resume"
+  assert_contains "$codex_args" "resume-review-999"
+}
+
 test_rejects_amp
 test_rejects_claude
 test_rejects_invalid_verify_mode
 test_runs_without_prd_or_jq
 test_selects_highest_priority_dependency_ready_todo
+test_default_mode_ignores_review_failed_tasks
+test_retry_review_failed_prefers_review_failed_task
 test_sequence_cli_uses_explicit_order
 test_sequence_file_uses_explicit_order
 test_sequence_missing_task_fails_fast
@@ -580,5 +685,6 @@ test_verification_none_skips_verifier_pass
 test_same_session_verification_reuses_worker_session
 test_new_session_verification_uses_fresh_verifier_session
 test_fails_when_verifier_rejects_task
+test_sequence_can_force_review_failed_task_without_retry_flag
 
 printf 'PASS: ralph runtime\n'

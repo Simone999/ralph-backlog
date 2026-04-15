@@ -118,6 +118,7 @@ A task is done only if:
 
 ## Patterns
 - Backlog-driven runtime selection uses `backlog task list -s "To Do" --sort priority --plain` plus `backlog task <id> --plain`; shell tests for this path should mock both commands via `PATH` and assert selected task text reaches Codex stdin.
+- Selection tests that cover multiple statuses should mock separate `backlog task list -s "<status>" --sort priority --plain` outputs per status, not one shared task-list fixture.
 - Move selected task to `In Progress` before `codex exec` runs. If task already has `codex@<session_id>`, keep that assignee on the pre-run claim; for fresh sessions, parse the real id from the first `thread.started` JSONL event and then persist `codex@<session_id>`.
 - When consuming `codex exec --json` logs in shell, treat `turn.completed` as success and `turn.failed` as failure, and parse with `while IFS= read -r line || [[ -n "$line" ]]` so a final event without trailing newline is not dropped.
 - Verification runs use `prompt-verifier.md`; verifier result comes from Codex `-o` last-message output with `<verification>PASS</verification>` or `<verification>FAIL</verification>`, while `--verify same-session` resumes worker session and `--verify new-session` starts fresh.

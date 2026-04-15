@@ -248,8 +248,13 @@ dependencies_satisfied() {
 }
 
 list_todo_task_ids() {
+  list_task_ids_for_status "To Do"
+}
+
+list_task_ids_for_status() {
+  local status="$1"
   local task_list line
-  if ! task_list="$(backlog task list -s "To Do" --sort priority --plain 2>&1)"; then
+  if ! task_list="$(backlog task list -s "$status" --sort priority --plain 2>&1)"; then
     die "failed to list backlog tasks"
   fi
 
@@ -260,7 +265,8 @@ list_todo_task_ids() {
   done <<< "$task_list"
 }
 
-select_dependency_ready_task() {
+select_dependency_ready_task_from_status() {
+  local status="$1"
   local task_id task_plain
   while IFS= read -r task_id; do
     [[ -n "$task_id" ]] || continue
@@ -269,9 +275,23 @@ select_dependency_ready_task() {
       printf '%s\n' "$task_id"
       return 0
     fi
-  done < <(list_todo_task_ids)
+  done < <(list_task_ids_for_status "$status")
 
-  die "no dependency-ready 'To Do' backlog task found"
+  return 1
+}
+
+select_dependency_ready_task() {
+  if (( RETRY_REVIEW_FAILED )); then
+    if select_dependency_ready_task_from_status "Review Failed"; then
+      return 0
+    fi
+  fi
+
+  if select_dependency_ready_task_from_status "To Do"; then
+    return 0
+  fi
+
+  die "no dependency-ready backlog task found"
 }
 
 SEQUENCE_TASKS=()
@@ -395,6 +415,7 @@ run_codex_verification() {
 TOOL="codex"
 MAX_ITERATIONS="10"
 VERIFY_MODE="${RALPH_VERIFY_MODE:-none}"
+RETRY_REVIEW_FAILED=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -434,12 +455,16 @@ while [[ $# -gt 0 ]]; do
       VERIFY_MODE="${1#*=}"
       shift
       ;;
+    --retry-review-failed)
+      RETRY_REVIEW_FAILED=1
+      shift
+      ;;
     *)
       if [[ "$1" =~ ^[0-9]+$ ]]; then
         MAX_ITERATIONS="$1"
         shift
       else
-        die "usage: ./ralph.sh [--tool codex] [--sequence task-1,task-2] [--sequence-file path] [--verify none|same-session|new-session] [max_iterations]"
+        die "usage: ./ralph.sh [--tool codex] [--sequence task-1,task-2] [--sequence-file path] [--verify none|same-session|new-session] [--retry-review-failed] [max_iterations]"
       fi
       ;;
   esac

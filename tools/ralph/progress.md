@@ -1,6 +1,7 @@
 # Codebase Patterns
 - Shell regressions for `ralph.sh` live in `tests/ralph-runtime.sh`; mock external CLIs through `PATH` and never invoke real `codex`.
 - Backlog-driven selection tests should mock both `backlog task list --plain` and `backlog task <id> --plain`, and verify selected task text is piped into Codex stdin.
+- Selection tests that span multiple backlog statuses should mock separate `backlog task list -s "<status>" --sort priority --plain` outputs per status instead of reusing one shared task list fixture.
 - Ralph should move selected work to `In Progress` before `codex exec` runs; if no prior assignee exists, capture the real session id from the first `thread.started` JSONL event and then persist `codex@<session_id>`.
 - Parse `codex exec --json` logs by event type: `turn.completed` means success, `turn.failed` means failure, and shell readers must handle a final line without trailing newline or they can miss the outcome event.
 - Verification runs use `prompt-verifier.md`; verifier result comes from Codex `-o` last-message output with `<verification>PASS</verification>` or `<verification>FAIL</verification>`, while `--verify same-session` resumes worker session and `--verify new-session` starts fresh.
@@ -99,4 +100,15 @@
   - Patterns discovered: verification outcome handling belongs in Ralph runtime, not worker prompt; runtime should own final status transitions after verifier returns.
   - Gotchas encountered: review feedback needs durable storage before failure exit, otherwise task status changes alone hide why verifier rejected work.
   - Useful context: `new-session` verification still keeps worker assignee on failure; verifier session id is for review execution only, not resume ownership.
+---
+
+## 2026-04-16 01:33:55 CEST - US-009
+- Implemented `--retry-review-failed` in `ralph.sh`: default auto-selection still scans only `To Do`, while retry mode now checks dependency-ready `Review Failed` tasks first and falls back to `To Do` when none are eligible.
+- Expanded `tests/ralph-runtime.sh` with coverage for default ignore behavior, retry-mode preference for `Review Failed`, sequence override forcing `Review Failed` work without the flag, and status-aware backlog list mocks.
+- Updated reusable guidance in `AGENTS.md` and durable testing note `basic-memory/testing/Ralph Shell Runtime Tests.md`.
+- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
+- **Learnings for future iterations:**
+  - Patterns discovered: multi-status selection logic is easiest to verify with separate mocked `backlog task list -s "<status>"` outputs per status in shell fixtures.
+  - Gotchas encountered: status-based selection coverage is misleading if the mock backlog list ignores `-s`; teach the fixture about per-status list files before trusting the test.
+  - Useful context: sequence overrides still bypass auto-selection pool rules, so `--sequence task-x` can intentionally resume `Review Failed` work even when auto-retry is off.
 ---

@@ -38,3 +38,4 @@ Likely future searches this note should answer: "how to test ralph.sh without re
 - relates_to [[Ralph Agent Instructions]]
 - [pattern] Verification runs should use a verifier-specific prompt and return `<verification>PASS</verification>` or `<verification>FAIL</verification>` through Codex last-message output so shell orchestration can distinguish review rejection from runtime failure #verification #prompt
 - [pattern] `--verify same-session` should resume the worker session for verification, while `--verify new-session` should start a fresh Codex session and parse its own `thread.started` id #verification #session
+- [pattern] When `ralph.sh` selects from more than one backlog status, shell fixtures should provide separate mocked `backlog task list -s "<status>" --sort priority --plain` outputs for each status so tests exercise real selection order instead of a shared list shortcut #backlog #testing #status
