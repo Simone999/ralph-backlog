@@ -118,4 +118,4 @@ A task is done only if:
 
 ## Patterns
 - Backlog-driven runtime selection uses `backlog task list -s "To Do" --sort priority --plain` plus `backlog task <id> --plain`; shell tests for this path should mock both commands via `PATH` and assert selected task text reaches Codex stdin.
-- Before Codex starts work on selected task, claim it through `backlog task edit <id> -s "In Progress" -a "codex@<session_id>"`, then reload `backlog task <id> --plain` so prompt text reflects current status and assignee.
+- Move selected task to `In Progress` before `codex exec` runs. If task already has `codex@<session_id>`, keep that assignee on the pre-run claim; for fresh sessions, parse the real id from the first `thread.started` JSONL event and then persist `codex@<session_id>`.

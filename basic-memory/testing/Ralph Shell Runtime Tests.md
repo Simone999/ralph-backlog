@@ -16,7 +16,7 @@ This lets tests verify CLI behavior, runtime control flow, and required-command 
 Likely future searches this note should answer: "how to test ralph.sh without real codex", "why does ralph runtime test remove jq", and "where are shell tests for codex-only loop".
 
 ## Observations
-- [pattern] Session-metadata runtime tests should mock `backlog task edit` and assert selected task is claimed as `In Progress` with `codex@<session_id>` before the Codex boundary runs #backlog #session #testing
+- [pattern] Fresh-session runtime tests should feed mocked `codex exec --json` output with a `thread.started` event, then assert Ralph persists `codex@<thread_id>` after launch while leaving the task `In Progress` throughout #backlog #session #testing
 - [reason] Reloading `backlog task <id> --plain` after metadata edits keeps worker prompt text aligned with current assignee and status #backlog #prompt
 
 - [pattern] `ralph.sh` regression tests can run as plain shell scripts under `tests/` with `bash tests/ralph-runtime.sh` #ralph #testing

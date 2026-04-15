@@ -116,27 +116,44 @@ extract_codex_session_id() {
   return 1
 }
 
-generate_session_id() {
+mark_task_in_progress() {
   local task_id="$1"
-  printf '%s\n' "$(date -u "+%s")-$$-$task_id"
+  local session_id="${2:-}"
+
+  if [[ -n "$session_id" ]]; then
+    if ! backlog task edit "$task_id" -s "In Progress" -a "codex@$session_id" >/dev/null; then
+      die "failed to update backlog metadata for task '$task_id'"
+    fi
+    return 0
+  fi
+
+  if ! backlog task edit "$task_id" -s "In Progress" >/dev/null; then
+    die "failed to update backlog metadata for task '$task_id'"
+  fi
 }
 
-claim_task_session() {
+write_task_session_assignee() {
   local task_id="$1"
-  local task_plain="$2"
-  local assignee session_id
-
-  assignee="$(extract_task_assignee "$task_plain" || true)"
-  session_id="$(extract_codex_session_id "$assignee" || true)"
-  if [[ -z "$session_id" ]]; then
-    session_id="$(generate_session_id "$task_id")"
-  fi
+  local session_id="$2"
 
   if ! backlog task edit "$task_id" -s "In Progress" -a "codex@$session_id" >/dev/null; then
     die "failed to update backlog metadata for task '$task_id'"
   fi
+}
 
-  printf '%s\n' "$session_id"
+extract_codex_thread_id_from_run_log() {
+  local run_file="$1"
+  local line
+
+  while IFS= read -r line; do
+    [[ "$line" == *'"type":"thread.started"'* ]] || continue
+    if [[ "$line" =~ \"thread_id\":\"([^\"]+)\" ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+  done < "$run_file"
+
+  return 1
 }
 
 dependencies_satisfied() {
@@ -229,15 +246,16 @@ select_next_task() {
 }
 
 run_codex(){
-  local prompt="$1"
-  local run_file="$2"
-  shift 2
+  local task_id="$1"
+  local prompt="$2"
+  local run_file="$3"
+  shift 3
 
   local last_message_file="/tmp/$(date -u '+ralph-last-message-%s.txt')"
   mkdir -p "$(dirname "$run_file")"
 
   if ! printf '%s' "$prompt" | "${CODEX_BASE_CMD[@]}" -o "$last_message_file" --json - > "$run_file"; then
-    die "Codex command failed. Check '$run_file' for details."
+    die "failed to start Codex worker for task '$task_id'. Check '$run_file' for details."
   fi
   cat "$last_message_file" 2>/dev/null || true
 }
@@ -320,8 +338,9 @@ log "Starting Ralph - Tool: $TOOL - Max iterations: $MAX_ITERATIONS"
 for i in $(seq 1 $MAX_ITERATIONS); do
   task_id="$(select_next_task "$((i - 1))")"
   task_plain="$(load_task_plain "$task_id")"
-  session_id="$(claim_task_session "$task_id" "$task_plain")"
-  log "Using Codex session $session_id for task $task_id"
+  assignee="$(extract_task_assignee "$task_plain" || true)"
+  session_id="$(extract_codex_session_id "$assignee" || true)"
+  mark_task_in_progress "$task_id" "$session_id"
   task_plain="$(load_task_plain "$task_id")"
 
   echo ""
@@ -332,7 +351,14 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   prompt_template="$(cat "$SCRIPT_DIR/prompt-codex.md")"
   prompt=$(printf 'Assigned backlog task from `backlog task %s --plain`:\n\n%s\n\n%s' "$task_id" "$task_plain" "$prompt_template")
   run_file="$SCRIPT_DIR/runs/$(date -u '+ralph-run-%s.jsonl')"
-  OUTPUT=$(run_codex "$prompt" "$run_file")
+  OUTPUT=$(run_codex "$task_id" "$prompt" "$run_file")
+
+  if [[ -z "$session_id" ]]; then
+    session_id="$(extract_codex_thread_id_from_run_log "$run_file" || true)"
+    [[ -n "$session_id" ]] || die "failed to capture Codex session id for task '$task_id'"
+    write_task_session_assignee "$task_id" "$session_id"
+  fi
+  log "Using Codex session $session_id for task $task_id"
   
   # Check for completion signal
   if echo "$OUTPUT" | grep -q "<promise>COMPLETE</promise>"; then

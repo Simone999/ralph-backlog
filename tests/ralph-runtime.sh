@@ -30,6 +30,8 @@ printf '%s\n' "$*" > "${TMPDIR:-/tmp}/ralph-codex-args.txt"
 cat > "${TMPDIR:-/tmp}/ralph-codex-stdin.txt"
 if [[ -n "${MOCK_CODEX_OUTPUT:-}" ]]; then
   printf '%s' "$MOCK_CODEX_OUTPUT"
+elif [[ "${MOCK_CODEX_SUPPRESS_OUTPUT:-0}" != "1" ]]; then
+  printf '%s\n' '{"type":"thread.started","thread_id":"mock-session-123"}'
 fi
 exit "${MOCK_CODEX_EXIT:-0}"
 EOF
@@ -261,7 +263,7 @@ test_sequence_missing_task_fails_fast() {
   [[ ! -f "$fixture/tmp/ralph-codex-stdin.txt" ]] || fail "expected codex not to run when sequence task is missing"
 }
 
-test_marks_fresh_task_in_progress_and_writes_codex_assignee() {
+test_captures_fresh_session_id_and_writes_codex_assignee() {
   local fixture output status edited_task
 
   fixture="$(setup_fixture)"
@@ -271,14 +273,35 @@ test_marks_fresh_task_in_progress_and_writes_codex_assignee() {
   write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Fresh task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
 
   set +e
-  output="$(run_script "$fixture" 1)"
+  output="$(MOCK_CODEX_OUTPUT=$'{"type":"thread.started","thread_id":"session-fresh-123"}\n{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}' run_script "$fixture" 1)"
   status=$?
   set -e
 
   [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
   edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
+  assert_contains "$output" "Using Codex session session-fresh-123 for task task-1"
   assert_contains "$edited_task" "Status: ○ In Progress"
-  assert_contains "$edited_task" "Assignee: codex@"
+  assert_contains "$edited_task" "Assignee: codex@session-fresh-123"
+}
+
+test_fails_loudly_when_fresh_codex_session_id_is_missing() {
+  local fixture output status edited_task
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Fresh task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Fresh task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(MOCK_CODEX_SUPPRESS_OUTPUT=1 run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -ne 0 ]] || fail "expected missing session id to fail"
+  assert_contains "$output" "failed to capture Codex session id for task 'task-1'"
+  edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
+  assert_contains "$edited_task" "Status: ○ In Progress"
 }
 
 test_resumes_prior_session_from_assignee_metadata() {
@@ -309,7 +332,8 @@ test_selects_highest_priority_dependency_ready_todo
 test_sequence_cli_uses_explicit_order
 test_sequence_file_uses_explicit_order
 test_sequence_missing_task_fails_fast
-test_marks_fresh_task_in_progress_and_writes_codex_assignee
+test_captures_fresh_session_id_and_writes_codex_assignee
+test_fails_loudly_when_fresh_codex_session_id_is_missing
 test_resumes_prior_session_from_assignee_metadata
 
 printf 'PASS: ralph runtime\n'
