@@ -122,6 +122,10 @@ extract_task_status() {
   local line
   while IFS= read -r line; do
     case "$line" in
+      *"Status:"*"Review")
+        printf 'Review\n'
+        return 0
+        ;;
       *"Status:"*"Review Failed")
         printf 'Review Failed\n'
         return 0
@@ -363,6 +367,19 @@ list_todo_task_ids() {
   list_task_ids_for_status "To Do"
 }
 
+list_task_ids_in_backlog_order() {
+  local task_list line
+  if ! task_list="$(backlog task list --sort priority --plain 2>&1)"; then
+    die "failed to list backlog tasks"
+  fi
+
+  while IFS= read -r line; do
+    if [[ "$line" =~ \[[A-Z]+\][[:space:]]+([A-Z0-9-]+)[[:space:]]+-[[:space:]].+$ ]]; then
+      normalize_task_id "${BASH_REMATCH[1]}"
+    fi
+  done <<< "$task_list"
+}
+
 list_task_ids_for_status() {
   local status="$1"
   local task_list line
@@ -407,31 +424,27 @@ eligible_work_remaining() {
   return 1
 }
 
-select_dependency_ready_task_from_status() {
-  local status="$1"
-  local task_id task_plain
+select_dependency_ready_task() {
+  local task_id task_plain task_status
+
   while IFS= read -r task_id; do
     [[ -n "$task_id" ]] || continue
     task_plain="$(load_task_plain "$task_id")"
+    task_status="$(extract_task_status "$task_plain" || true)"
+
+    if [[ "$task_status" == "To Do" ]]; then
+      :
+    elif [[ "$task_status" == "Review Failed" && "$RETRY_REVIEW_FAILED" == "1" ]]; then
+      :
+    else
+      continue
+    fi
+
     if dependencies_satisfied "$task_plain"; then
       printf '%s\n' "$task_id"
       return 0
     fi
-  done < <(list_task_ids_for_status "$status")
-
-  return 1
-}
-
-select_dependency_ready_task() {
-  if (( RETRY_REVIEW_FAILED )); then
-    if select_dependency_ready_task_from_status "Review Failed"; then
-      return 0
-    fi
-  fi
-
-  if select_dependency_ready_task_from_status "To Do"; then
-    return 0
-  fi
+  done < <(list_task_ids_in_backlog_order)
 
   die "no dependency-ready backlog task found"
 }

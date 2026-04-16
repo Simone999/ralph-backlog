@@ -1,6 +1,7 @@
 ## Codebase Patterns
 - `backlog/config.yml` status order is runtime queue precedence for review-flow stories; keep `Review` between `In Progress` and `Review Failed`, and lock it with a focused shell test.
 - Root `config.yaml` drives Ralph runtime policy; shell regressions that touch runtime startup should copy that file into fixture and can wrap `python3` to prove config load happens before worker run.
+- No-sequence selection should consume one ordered `backlog task list --sort priority --plain` result; shell fixtures should store that separately from status-specific task lists because completion checks still query `-s "<status>"`.
 
 --- 
 
@@ -23,4 +24,13 @@
   - Root `config.yaml` is Ralph-only runtime policy; keep it separate from Backlog project config in `backlog/config.yml`
   - Shell fixture must copy `config.yaml` when startup behavior depends on runtime policy
   - Wrapping `python3` inside fixture is clean way to prove config load timing without real network or agent calls
+---
+## 2026-04-17 01:14:19 CEST - US-009
+- Switched no-sequence selection in `ralph.sh` from status-by-status scans to one ordered `backlog task list --sort priority --plain` pass, while keeping current candidate rules (`To Do`, plus `Review Failed` only when retry flag is set)
+- Added selection regression coverage for ordered-list queue building and updated shell fixtures to distinguish ordered list output from status-specific task lists
+- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `tools/ralph/prd.json`, `tools/ralph/progress.md`, `AGENTS.md`
+- **Learnings for future iterations:**
+  - Queue order now comes from emitted backlog list order, not manual status precedence inside `ralph.sh`
+  - Ordered-list selection fixtures need a separate `task-list-all` view; status-specific fixtures still matter for completion checks
+  - `extract_task_status` must recognize `Review` even before runtime starts selecting that status, because ordered scans can encounter it while skipping non-runnable work
 ---

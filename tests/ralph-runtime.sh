@@ -93,12 +93,14 @@ mock_dir="${MOCK_BACKLOG_DIR:?}"
 
 if [[ "${1:-}" == "task" && "${2:-}" == "list" ]]; then
   status="To Do"
+  status_flag=0
   shift 2
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -s)
         status="${2:-}"
+        status_flag=1
         shift 2
         ;;
       --sort)
@@ -113,7 +115,20 @@ if [[ "${1:-}" == "task" && "${2:-}" == "list" ]]; then
     esac
   done
 
-  list_file="$mock_dir/task-list-${status// /-}.txt"
+  if [[ "$status_flag" == "1" ]]; then
+    printf 'task list -s %s --sort priority --plain\n' "$status" >> "$mock_dir/backlog-list-log.txt"
+  else
+    printf 'task list --sort priority --plain\n' >> "$mock_dir/backlog-list-log.txt"
+  fi
+
+  if [[ "$status_flag" == "1" ]]; then
+    list_file="$mock_dir/task-list-${status// /-}.txt"
+  else
+    list_file="$mock_dir/task-list-all.txt"
+    if [[ ! -f "$list_file" ]]; then
+      list_file="$mock_dir/task-list-To-Do.txt"
+    fi
+  fi
   cat "$list_file" 2>/dev/null || true
   exit 0
 fi
@@ -299,6 +314,7 @@ fi
 if [[ "${1:-}" == "task" && -n "${2:-}" ]]; then
   task_id="${2,,}"
   task_file="$mock_dir/${task_id}.txt"
+  printf 'task %s --plain\n' "$task_id" >> "$mock_dir/backlog-show-log.txt"
   if [[ -f "$task_file" ]]; then
     cat "$task_file"
   else
@@ -342,6 +358,13 @@ write_task_list() {
   local content="$2"
 
   write_task_list_for_status "$fixture" "To Do" "$content"
+}
+
+write_ordered_task_list() {
+  local fixture="$1"
+  local content="$2"
+
+  printf '%s\n' "$content" > "$fixture/mock-backlog/task-list-all.txt"
 }
 
 write_task_list_for_status() {
@@ -523,14 +546,46 @@ test_selects_highest_priority_dependency_ready_todo() {
   assert_contains "$codex_input" "Task TASK-3 - Medium todo"
 }
 
+test_default_mode_uses_one_ordered_backlog_list_pass() {
+  local fixture output status codex_input list_log show_log
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_ordered_task_list "$fixture" $'Review:\n  [HIGH] TASK-9 - Already reviewing\nTo Do:\n  [MEDIUM] TASK-3 - Medium todo\n  [LOW] TASK-1 - Low todo'
+  write_task_list "$fixture" $'To Do:\n  [MEDIUM] TASK-3 - Medium todo\n  [LOW] TASK-1 - Low todo'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Low todo\n==================================================\n\nStatus: ○ To Do\nPriority: Low\nCreated: 2026-04-16 00:00'
+  write_task_plain "$fixture" "task-3" $'File: mock/task-3.md\n\nTask TASK-3 - Medium todo\n==================================================\n\nStatus: ○ To Do\nPriority: Medium\nCreated: 2026-04-16 00:00'
+  write_task_plain "$fixture" "task-9" $'File: mock/task-9.md\n\nTask TASK-9 - Already reviewing\n==================================================\n\nStatus: ○ Review\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  codex_input="$(cat "$fixture/tmp/ralph-codex-stdin.txt")"
+  list_log="$(cat "$fixture/mock-backlog/backlog-list-log.txt")"
+  show_log="$(cat "$fixture/mock-backlog/backlog-show-log.txt")"
+  assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
+  [[ "$(printf '%s\n' "$list_log" | wc -l | tr -d ' ')" == "2" ]] || fail "expected exactly two backlog list calls"
+  [[ "$(printf '%s\n' "$list_log" | grep -c '^task list --sort priority --plain$' | tr -d ' ')" == "1" ]] || fail "expected exactly one ordered backlog list call"
+  assert_contains "$list_log" "task list -s To Do --sort priority --plain"
+  assert_not_contains "$list_log" "-s Review Failed"
+  assert_contains "$codex_input" "Task TASK-3 - Medium todo"
+  assert_contains "$show_log" "task task-9 --plain"
+  assert_contains "$show_log" "task task-3 --plain"
+  assert_not_contains "$show_log" "task task-1 --plain"
+}
+
 test_default_mode_ignores_review_failed_tasks() {
   local fixture output status codex_input edited_task
 
   fixture="$(setup_fixture)"
   trap 'rm -rf "$fixture"' RETURN
   mkdir -p "$fixture/tmp"
+  write_ordered_task_list "$fixture" $'Review Failed:\n  [HIGH] TASK-1 - Failed review task\nTo Do:\n  [MEDIUM] TASK-2 - Fresh todo'
   write_task_list "$fixture" $'To Do:\n  [MEDIUM] TASK-2 - Fresh todo'
-  write_task_list_for_status "$fixture" "Review Failed" $'Review Failed:\n  [HIGH] TASK-1 - Failed review task'
   write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Failed review task\n==================================================\n\nStatus: ○ Review Failed\nPriority: High\nCreated: 2026-04-16 00:00\nAssignee: codex@resume-review-123'
   write_task_plain "$fixture" "task-2" $'File: mock/task-2.md\n\nTask TASK-2 - Fresh todo\n==================================================\n\nStatus: ○ To Do\nPriority: Medium\nCreated: 2026-04-16 00:00'
 
@@ -554,6 +609,7 @@ test_retry_review_failed_prefers_review_failed_task() {
   fixture="$(setup_fixture)"
   trap 'rm -rf "$fixture"' RETURN
   mkdir -p "$fixture/tmp"
+  write_ordered_task_list "$fixture" $'Review Failed:\n  [HIGH] TASK-1 - Failed review task\nTo Do:\n  [MEDIUM] TASK-2 - Fresh todo'
   write_task_list "$fixture" $'To Do:\n  [MEDIUM] TASK-2 - Fresh todo'
   write_task_list_for_status "$fixture" "Review Failed" $'Review Failed:\n  [HIGH] TASK-1 - Failed review task'
   write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Failed review task\n==================================================\n\nStatus: ○ Review Failed\nPriority: High\nCreated: 2026-04-16 00:00\nAssignee: codex@resume-review-123'
@@ -1051,6 +1107,7 @@ test_requires_python3_for_runtime_config
 test_loads_runtime_config_with_python3_before_worker_run
 test_runs_without_prd_or_jq
 test_selects_highest_priority_dependency_ready_todo
+test_default_mode_uses_one_ordered_backlog_list_pass
 test_default_mode_ignores_review_failed_tasks
 test_retry_review_failed_prefers_review_failed_task
 test_sequence_cli_uses_explicit_order

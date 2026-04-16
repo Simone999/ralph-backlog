@@ -119,8 +119,8 @@ A task is done only if:
 ## Patterns
 - Queue-driven review-flow work treats `backlog/config.yml` status order as runtime precedence source; keep `Review` between `In Progress` and `Review Failed`, and lock that order with a focused shell test instead of broad runtime edits.
 - Root `config.yaml` is Ralph runtime policy file; load it in shell via `python3` + PyYAML before selection/review logic, and copy it into shell-test fixtures when runtime behavior depends on config.
-- Backlog-driven runtime selection uses `backlog task list -s "To Do" --sort priority --plain` plus `backlog task <id> --plain`; shell tests for this path should mock both commands via `PATH` and assert selected task text reaches Codex stdin.
-- Selection tests that cover multiple statuses should mock separate `backlog task list -s "<status>" --sort priority --plain` outputs per status, not one shared task-list fixture.
+- No-sequence runtime selection should build candidates from one ordered `backlog task list --sort priority --plain` pass, then load `backlog task <id> --plain` only for emitted task ids until it finds runnable work.
+- Shell tests for no-sequence selection should provide ordered-list fixture content separately from status-specific fixtures; use ordered output for queue order assertions, and keep `-s "<status>"` fixtures only for completion or retry-review checks.
 - Runtime session metadata now uses assignee `codex` plus label `session_id:<id>`; parse `Labels:` first for resume state, and only fall back to legacy `codex@<session_id>` assignee values while migrating touched tasks.
 - Backlog plain output omits `Labels:` when no labels exist, so shell parsers and fixtures must tolerate a missing labels line.
 - Fresh-task claim flow should assign `codex` before setting status `In Progress`; if task already has session metadata, keep it resumable on the pre-run claim, and for fresh sessions persist `session_id:<id>` only after the first `thread.started` event.

@@ -43,7 +43,7 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Baseline: `ralph.sh` currently calls `backlog task list -s <status> --sort priority --plain` separately for `To Do` and optionally `Review Failed`. Target: one ordered list pass, then detail filtering. Read `basic-memory/plans/Ralph Queue-Driven Review Flow Plan.md` under Selection and task lifecycle and Test Plan. Update shell fixtures so `backlog task list` without `-s` returns grouped statuses in backlog-config order. This story is about queue construction only; do not yet change candidate validity rules beyond what is needed to preserve one-pass ordering."
     },
     {
