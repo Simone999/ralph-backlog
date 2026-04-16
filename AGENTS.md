@@ -119,10 +119,12 @@ A task is done only if:
 ## Patterns
 - Backlog-driven runtime selection uses `backlog task list -s "To Do" --sort priority --plain` plus `backlog task <id> --plain`; shell tests for this path should mock both commands via `PATH` and assert selected task text reaches Codex stdin.
 - Selection tests that cover multiple statuses should mock separate `backlog task list -s "<status>" --sort priority --plain` outputs per status, not one shared task-list fixture.
-- Move selected task to `In Progress` before `codex exec` runs. If task already has `codex@<session_id>`, keep that assignee on the pre-run claim; for fresh sessions, parse the real id from the first `thread.started` JSONL event and then persist `codex@<session_id>`.
-- To test session round-trips in `tests/ralph-runtime.sh`, force the same task twice via `--sequence task-1,task-1`; first iteration should capture `thread.started`, second should resume with the persisted `codex@<session_id>` assignee.
+- Runtime session metadata now uses assignee `codex` plus label `session_id:<id>`; parse `Labels:` first for resume state, and only fall back to legacy `codex@<session_id>` assignee values while migrating touched tasks.
+- Backlog plain output omits `Labels:` when no labels exist, so shell parsers and fixtures must tolerate a missing labels line.
+- Move selected task to `In Progress` before `codex exec` runs. If task already has session metadata, keep it resumable on the pre-run claim; for fresh sessions, parse the real id from the first `thread.started` JSONL event and then persist `session_id:<id>`.
+- To test session round-trips in `tests/ralph-runtime.sh`, force the same task twice via `--sequence task-1,task-1`; first iteration should capture `thread.started`, second should resume with the persisted `session_id:<id>` label.
 - When consuming `codex exec --json` logs in shell, treat `turn.completed` as success and `turn.failed` as failure, and parse with `while IFS= read -r line || [[ -n "$line" ]]` so a final event without trailing newline is not dropped.
 - Verification runs use `prompt-verifier.md`; verifier result comes from Codex `-o` last-message output with `<verification>PASS</verification>` or `<verification>FAIL</verification>`, while `--verify same-session` resumes worker session and `--verify new-session` starts fresh.
-- Verification pass should move task to `Done`; verification failure should append reviewer feedback with `backlog task edit --append-notes`, move task to `Review Failed`, and keep worker assignee as `codex@<session_id>` for later resume.
+- Verification pass should move task to `Done`; verification failure should append reviewer feedback with `backlog task edit --append-notes`, move task to `Review Failed`, and keep worker label `session_id:<id>` for later resume.
 - When changing `prompt-codex.md`, extend `tests/ralph-runtime.sh` to assert Codex stdin contains required worker instructions and no stale PRD-selection text.
 - In `flowchart/src/App.tsx`, React compiler lint expects `useCallback` dependency arrays to include ref objects referenced inside the callback, even when only `.current` is mutated.

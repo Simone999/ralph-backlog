@@ -1,125 +1,18 @@
 # Codebase Patterns
-- Shell regressions for `ralph.sh` live in `tests/ralph-runtime.sh`; mock external CLIs through `PATH` and never invoke real `codex`.
-- Backlog-driven selection tests should mock both `backlog task list --plain` and `backlog task <id> --plain`, and verify selected task text is piped into Codex stdin.
-- Selection tests that span multiple backlog statuses should mock separate `backlog task list -s "<status>" --sort priority --plain` outputs per status instead of reusing one shared task list fixture.
-- Ralph should move selected work to `In Progress` before `codex exec` runs; if no prior assignee exists, capture the real session id from the first `thread.started` JSONL event and then persist `codex@<session_id>`.
-- To test fresh-session metadata round-trips, force the same task twice with `--sequence task-1,task-1`; first mocked Codex run should emit `thread.started`, second should use `exec resume <session_id>`.
-- Parse `codex exec --json` logs by event type: `turn.completed` means success, `turn.failed` means failure, and shell readers must handle a final line without trailing newline or they can miss the outcome event.
-- Verification runs use `prompt-verifier.md`; verifier result comes from Codex `-o` last-message output with `<verification>PASS</verification>` or `<verification>FAIL</verification>`, while `--verify same-session` resumes worker session and `--verify new-session` starts fresh.
-- Verification pass should move task to `Done`; verification failure should append reviewer feedback via `backlog task edit --append-notes`, move task to `Review Failed`, and preserve worker assignee as `codex@<session_id>`.
-- Prompt migrations in `prompt-codex.md` should be covered by shell regressions that assert mocked Codex stdin contains required worker instructions and does not contain stale PRD-selection text.
-- In `flowchart/src/App.tsx`, avoid render-time reads of `ref.current`; React compiler lint also expects callbacks that touch a ref object to list that ref in the `useCallback` dependency array.
+- Runtime session metadata now uses assignee `codex` plus label `session_id:<id>`; shell parsers should read `Labels:` first and only fall back to legacy `codex@<session_id>` assignees while migrating touched tasks.
+- `backlog task --plain` omits the `Labels:` line when a task has no labels, so runtime parsing and test fixtures must tolerate that field being absent.
 
+# Ralph Progress Log
+Started: Thu Apr 16 14:21:12 CEST 2026
 ---
 
-# Progress Logs
-
-## 2026-04-16 00:36:25 CEST - US-001
-- Implemented codex-only runtime in `ralph.sh`: `--tool` now accepts only `codex`, Amp/Claude branches are removed, and script no longer reads or tracks `prd.json` state.
-- Added `tests/ralph-runtime.sh` covering unsupported tool rejection plus one-iteration codex execution without `prd.json` or `jq`.
-- Updated `AGENTS.md` runtime guidance to reflect codex-only behavior and document shell test harness location.
-- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
+## 2026-04-16 14:27:15 CEST - US-001
+- Implemented canonical session metadata in `ralph.sh`: Ralph now reads resume state from `Labels: session_id:<id>`, falls back to legacy `codex@<session_id>` assignees during migration, and rewrites touched tasks to assignee `codex` plus the session label.
+- Expanded `tests/ralph-runtime.sh` to model backlog label edits, assert fresh-session label persistence, verify resume-from-label behavior, and cover legacy assignee migration to canonical metadata.
+- Updated reusable runtime guidance in `AGENTS.md` for label-based session storage and missing `Labels:` lines in plain backlog output.
+- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `AGENTS.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
 - **Learnings for future iterations:**
-  - Patterns discovered: use fixture-local `PATH` shims to mock `codex` and runtime dependencies in shell tests.
-  - Gotchas encountered: omitting `jq` from fixture `PATH` is a good guard against accidental drift back to PRD-driven shell logic.
-- Useful context: `ralph.sh` currently sends raw `prompt-codex.md`; task-scoped prompt migration still belongs to later prompt-focused stories.
----
-
-## 2026-04-16 00:45:23 CEST - US-002
-- Implemented backlog task selection in `ralph.sh`: default mode now scans `To Do` tasks by priority, skips blocked work until dependencies are `Done`, validates forced sequence entries up front, and injects selected `backlog task <id> --plain` output into Codex input.
-- Expanded `tests/ralph-runtime.sh` with mocked `backlog` and Codex boundaries covering dependency-ready auto-selection, CLI/file sequence overrides, missing-task fail-fast behavior, and Codex stdin task handoff.
-- Updated reusable guidance in `AGENTS.md` and durable testing notes in `basic-memory/testing/Ralph Shell Runtime Tests.md`.
-- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
-- **Learnings for future iterations:**
-  - Patterns discovered: for backlog-driven runtime work, treat `backlog task list --plain` as candidate source and `backlog task <id> --plain` as source of truth for dependencies and task payload.
-  - Gotchas encountered: missing `backlog task <id> --plain` lookups are safer to detect by validating detail output shape, not only command exit status.
-  - Useful context: sequence overrides now support both `--sequence` and `--sequence-file`; when provided, entries are validated before Codex starts.
----
-
-## 2026-04-16 00:51:15 CEST - US-003
-- Implemented session metadata claiming in `ralph.sh`: selected tasks are now moved to `In Progress`, assigned `codex@<session_id>`, and reloaded before Codex receives prompt text.
-- Added assignee parsing helpers so existing `codex@<session_id>` metadata is reused for resume-oriented paths instead of being overwritten.
-- Updated reusable guidance in `AGENTS.md` and durable testing notes in `basic-memory/testing/Ralph Shell Runtime Tests.md`.
-- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
-- **Learnings for future iterations:**
-  - Patterns discovered: claim backlog ownership through `backlog task edit` before Codex runs, then reload plain task text so prompt state matches task metadata.
-  - Gotchas encountered: logging inside a shell helper that is called through command substitution disappears into captured stdout; emit logs after capturing helper output.
-  - Useful context: current session ids are generated by Ralph metadata plumbing; later worker-session stories can swap in real Codex session ids without changing assignee format.
----
-
-## 2026-04-16 01:00:34 CEST - US-004
-- Implemented fresh-session startup in `ralph.sh`: new tasks now move to `In Progress`, run `codex exec --json`, extract the real session id from the first `thread.started` event, and then persist `codex@<session_id>` back to backlog metadata.
-- Expanded `tests/ralph-runtime.sh` with mocked JSONL startup output plus a loud-failure case when fresh Codex launch does not yield a session id.
-- Updated reusable guidance in `AGENTS.md` and durable testing notes in `basic-memory/testing/Ralph Shell Runtime Tests.md`.
-- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
-- **Learnings for future iterations:**
-  - Patterns discovered: `codex exec --json` exposes fresh session identity through the first `thread.started` JSONL event, which is safer for shell automation than parsing human stderr output.
-  - Gotchas encountered: fresh-session tests need mocked JSONL startup output by default, otherwise Ralph cannot distinguish a missing session id from a launch failure.
-  - Useful context: existing `codex@<session_id>` assignees still drive the pre-run claim path; actual resume invocation still belongs to the next session-resume story.
----
-
-## 2026-04-16 01:08:00 CEST - US-005
-- Implemented resumed Codex worker runs in `ralph.sh`: tasks with `codex@<session_id>` assignees now invoke `codex exec resume <session_id>` instead of starting a fresh worker.
-- Added JSONL outcome handling so Ralph accepts `turn.completed`, rejects `turn.failed`, and fails loudly when a worker run ends without a clear outcome event.
-- Expanded `tests/ralph-runtime.sh` to cover resume command shape plus failure and unclear-outcome cases, and updated durable runtime-testing notes.
-- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
-- **Learnings for future iterations:**
-  - Patterns discovered: resumed non-interactive Codex work should use `codex exec resume <session_id>` and keep assignee metadata stable as `codex@<session_id>`.
-  - Gotchas encountered: Codex JSONL may omit trailing newline on the last event, so shell parsers that use plain `while read` can miss `turn.completed` and misclassify success as unclear.
-  - Useful context: outcome parsing now depends on JSONL event types rather than command exit alone, which keeps later verification stories aligned with the same log contract.
----
-
-## 2026-04-16 01:15:06 CEST - US-006
-- Replaced legacy PRD-loop Codex prompt in `prompt-codex.md` with task-scoped worker instructions: work only on assigned backlog task, write plan before coding, refine weak AC/DoD through `backlog task edit`, check items only when truly complete, and write final summary before returning control to Ralph.
-- Added prompt regression coverage in `tests/ralph-runtime.sh` by asserting mocked Codex stdin contains required backlog-worker instructions and excludes stale `prd.json` story-selection text.
-- Fixed existing `flowchart` lint blockers in `flowchart/src/App.tsx` so repo quality checks stay green after this story.
-- Updated reusable guidance in `AGENTS.md` and durable notes in `basic-memory/testing/Ralph Shell Runtime Tests.md` plus new note `basic-memory/frontend/Flowchart React Compiler Lint.md`.
-- Files changed: `prompt-codex.md`, `tests/ralph-runtime.sh`, `flowchart/src/App.tsx`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `basic-memory/frontend/Flowchart React Compiler Lint.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
-- **Learnings for future iterations:**
-  - Patterns discovered: test prompt changes through mocked Codex stdin so one shell regression covers both `ralph.sh` task wrapper text and `prompt-codex.md` content.
-  - Gotchas encountered: `eslint-plugin-react-hooks` in `flowchart` flags both render-time `ref.current` reads and missing ref objects in `useCallback` dependency arrays.
-  - Useful context: worker prompt now assumes Ralph already chose task and that all task mutations must go through `backlog task edit`, not direct task file edits.
----
-
-## 2026-04-16 01:22:59 CEST - US-007
-- Implemented verification mode plumbing in `ralph.sh`: `--verify` now accepts `none`, `same-session`, and `new-session`, with verifier runs using separate `prompt-verifier.md` instructions and explicit verification markers from Codex last-message output.
-- Expanded `tests/ralph-runtime.sh` with multi-invocation Codex mocks covering invalid verify mode rejection, verifier-disable mode, same-session reuse, new-session verification startup, and verifier rejection handling.
-- Updated reusable guidance in `AGENTS.md` and durable notes in `basic-memory/testing/Ralph Shell Runtime Tests.md`.
-- Files changed: `ralph.sh`, `prompt-verifier.md`, `tests/ralph-runtime.sh`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
-- **Learnings for future iterations:**
-  - Patterns discovered: verifier review outcome should travel through Codex `-o` last-message output so review rejection stays separate from JSONL runtime failure.
-  - Gotchas encountered: shell mocks for multi-pass Codex flows need per-invocation args/stdin capture plus mocked `-o` file writes, or verifier assertions silently see worker state.
-  - Useful context: `same-session` verification keeps worker session id for later resume, while `new-session` captures a fresh verifier session id without rewriting assignee yet.
----
-
-## 2026-04-16 01:28:44 CEST - US-008
-- Implemented verification-result transitions in `ralph.sh`: verifier pass now marks backlog task `Done`, while verifier failure appends review feedback to implementation notes, moves task to `Review Failed`, and preserves worker assignee as `codex@<session_id>`.
-- Expanded `tests/ralph-runtime.sh` so mocked verifier success asserts `Done` status and mocked verifier failure asserts `Review Failed` plus persisted review notes; extended backlog mock with `--append-notes` support to observe task feedback.
-- Updated reusable guidance in `AGENTS.md` and durable memory note `basic-memory/backlog/Implementation Notes.md`.
-- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `AGENTS.md`, `basic-memory/backlog/Implementation Notes.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
-- **Learnings for future iterations:**
-  - Patterns discovered: verification outcome handling belongs in Ralph runtime, not worker prompt; runtime should own final status transitions after verifier returns.
-  - Gotchas encountered: review feedback needs durable storage before failure exit, otherwise task status changes alone hide why verifier rejected work.
-  - Useful context: `new-session` verification still keeps worker assignee on failure; verifier session id is for review execution only, not resume ownership.
----
-
-## 2026-04-16 01:33:55 CEST - US-009
-- Implemented `--retry-review-failed` in `ralph.sh`: default auto-selection still scans only `To Do`, while retry mode now checks dependency-ready `Review Failed` tasks first and falls back to `To Do` when none are eligible.
-- Expanded `tests/ralph-runtime.sh` with coverage for default ignore behavior, retry-mode preference for `Review Failed`, sequence override forcing `Review Failed` work without the flag, and status-aware backlog list mocks.
-- Updated reusable guidance in `AGENTS.md` and durable testing note `basic-memory/testing/Ralph Shell Runtime Tests.md`.
-- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
-- **Learnings for future iterations:**
-  - Patterns discovered: multi-status selection logic is easiest to verify with separate mocked `backlog task list -s "<status>"` outputs per status in shell fixtures.
-  - Gotchas encountered: status-based selection coverage is misleading if the mock backlog list ignores `-s`; teach the fixture about per-status list files before trusting the test.
-  - Useful context: sequence overrides still bypass auto-selection pool rules, so `--sequence task-x` can intentionally resume `Review Failed` work even when auto-retry is off.
----
-
-## 2026-04-16 01:40:05 CEST - US-010
-- Expanded `tests/ralph-runtime.sh` with shell regressions for sequence-file missing-task rejection, completion-signal success exit, and fresh-session-to-resume round-trip using a repeated `--sequence` task.
-- Updated reusable guidance in `AGENTS.md` and durable testing note `basic-memory/testing/Ralph Shell Runtime Tests.md`.
-- Files changed: `tests/ralph-runtime.sh`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
-- **Learnings for future iterations:**
-  - Patterns discovered: repeated `--sequence task-1,task-1` is simplest way to prove first-run session capture and later `exec resume` reuse in one shell regression.
-  - Gotchas encountered: sequence validation coverage should exercise both `--sequence` and `--sequence-file`, and both should fail before mocked Codex creates stdin artifacts.
-  - Useful context: worker success path is best asserted through mocked Codex `-o` last-message output carrying `<promise>COMPLETE</promise>`, while JSONL stdout still carries `thread.started` and `turn.completed`.
+  - Patterns discovered: Backlog session metadata should be normalized through `-a codex -l session_id:<id>` so resume state has one home and assignee stays human-readable.
+  - Gotchas encountered: `backlog task --plain` has no `Labels:` line when empty, so shell parsers must not treat missing labels as malformed task output.
+  - Useful context: keeping legacy `codex@<session_id>` fallback in parser lets Ralph rewrite old tasks opportunistically without breaking resume flow.
 ---

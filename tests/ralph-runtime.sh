@@ -121,6 +121,79 @@ if [[ "${1:-}" == "task" && "${2:-}" == "edit" && -n "${3:-}" ]]; then
   [[ -f "$task_file" ]] || exit 1
   shift 3
 
+  read_labels() {
+    local labels_line
+    labels_line="$(grep '^Labels:' "$task_file" || true)"
+    if [[ -n "$labels_line" ]]; then
+      printf '%s\n' "${labels_line#Labels: }"
+    fi
+  }
+
+  write_labels() {
+    local labels="$1"
+    if grep -q '^Labels:' "$task_file"; then
+      if [[ -n "$labels" ]]; then
+        sed -i "s/^Labels: .*/Labels: $labels/" "$task_file"
+      else
+        sed -i '/^Labels: /d' "$task_file"
+      fi
+      return 0
+    fi
+
+    if [[ -n "$labels" ]]; then
+      printf '\nLabels: %s\n' "$labels" >> "$task_file"
+    fi
+  }
+
+  add_label() {
+    local new_label="$1"
+    local current labels_array label
+    current="$(read_labels)"
+    if [[ -z "$current" ]]; then
+      write_labels "$new_label"
+      return 0
+    fi
+
+    IFS=',' read -r -a labels_array <<< "$current"
+    for label in "${labels_array[@]}"; do
+      label="${label#"${label%%[![:space:]]*}"}"
+      label="${label%"${label##*[![:space:]]}"}"
+      if [[ "$label" == "$new_label" ]]; then
+        return 0
+      fi
+    done
+
+    write_labels "$current, $new_label"
+  }
+
+  remove_label() {
+    local target_label="$1"
+    local current labels_array kept=() label
+    current="$(read_labels)"
+    [[ -n "$current" ]] || return 0
+
+    IFS=',' read -r -a labels_array <<< "$current"
+    for label in "${labels_array[@]}"; do
+      label="${label#"${label%%[![:space:]]*}"}"
+      label="${label%"${label##*[![:space:]]}"}"
+      if [[ -n "$label" && "$label" != "$target_label" ]]; then
+        kept+=("$label")
+      fi
+    done
+
+    if (( ${#kept[@]} == 0 )); then
+      write_labels ""
+      return 0
+    fi
+
+    local joined="${kept[0]}"
+    local index
+    for ((index = 1; index < ${#kept[@]}; index++)); do
+      joined+=", ${kept[$index]}"
+    done
+    write_labels "$joined"
+  }
+
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -s)
@@ -136,6 +209,21 @@ if [[ "${1:-}" == "task" && "${2:-}" == "edit" && -n "${3:-}" ]]; then
         else
           printf '\nAssignee: %s\n' "$assignee" >> "$task_file"
         fi
+        ;;
+      -l|--label)
+        labels="$2"
+        shift 2
+        write_labels "$labels"
+        ;;
+      --add-label)
+        label="$2"
+        shift 2
+        add_label "$label"
+        ;;
+      --remove-label)
+        label="$2"
+        shift 2
+        remove_label "$label"
         ;;
       --append-notes)
         notes="$2"
@@ -428,7 +516,7 @@ test_sequence_file_missing_task_fails_fast() {
   [[ ! -f "$fixture/tmp/ralph-codex-stdin.txt" ]] || fail "expected codex not to run when sequence task is missing"
 }
 
-test_captures_fresh_session_id_and_writes_codex_assignee() {
+test_captures_fresh_session_id_and_writes_session_label() {
   local fixture output status edited_task
 
   fixture="$(setup_fixture)"
@@ -446,7 +534,9 @@ test_captures_fresh_session_id_and_writes_codex_assignee() {
   edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
   assert_contains "$output" "Using Codex session session-fresh-123 for task task-1"
   assert_contains "$edited_task" "Status: ○ In Progress"
-  assert_contains "$edited_task" "Assignee: codex@session-fresh-123"
+  assert_contains "$edited_task" "Assignee: codex"
+  assert_contains "$edited_task" "Labels: session_id:session-fresh-123"
+  assert_not_contains "$edited_task" "codex@session-fresh-123"
 }
 
 test_round_trips_fresh_session_into_resume_run() {
@@ -472,7 +562,8 @@ test_round_trips_fresh_session_into_resume_run() {
   assert_contains "$second_args" "resume"
   assert_contains "$second_args" "session-roundtrip-123"
   assert_contains "$edited_task" "Status: ○ In Progress"
-  assert_contains "$edited_task" "Assignee: codex@session-roundtrip-123"
+  assert_contains "$edited_task" "Assignee: codex"
+  assert_contains "$edited_task" "Labels: session_id:session-roundtrip-123"
 }
 
 test_fails_loudly_when_fresh_codex_session_id_is_missing() {
@@ -495,14 +586,14 @@ test_fails_loudly_when_fresh_codex_session_id_is_missing() {
   assert_contains "$edited_task" "Status: ○ In Progress"
 }
 
-test_resumes_prior_session_from_assignee_metadata() {
+test_resumes_prior_session_from_session_label_metadata() {
   local fixture output status edited_task codex_args
 
   fixture="$(setup_fixture)"
   trap 'rm -rf "$fixture"' RETURN
   mkdir -p "$fixture/tmp"
   write_task_list "$fixture" $'To Do:\n  [LOW] TASK-9 - Other task'
-  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Resume task\n==================================================\n\nStatus: ○ In Progress\nAssignee: codex@resume-123\nPriority: High\nCreated: 2026-04-16 00:00'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Resume task\n==================================================\n\nStatus: ○ In Progress\nAssignee: codex\nLabels: session_id:resume-123\nPriority: High\nCreated: 2026-04-16 00:00'
 
   set +e
   output="$(run_script "$fixture" --sequence task-1 1)"
@@ -517,7 +608,33 @@ test_resumes_prior_session_from_assignee_metadata() {
   assert_contains "$codex_args" "resume"
   assert_contains "$codex_args" "resume-123"
   assert_contains "$edited_task" "Status: ○ In Progress"
-  assert_contains "$edited_task" "Assignee: codex@resume-123"
+  assert_contains "$edited_task" "Assignee: codex"
+  assert_contains "$edited_task" "Labels: session_id:resume-123"
+}
+
+test_migrates_legacy_assignee_session_metadata_to_session_label() {
+  local fixture output status edited_task codex_args
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Legacy session task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Legacy session task\n==================================================\n\nStatus: ○ In Progress\nAssignee: codex@legacy-123\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" --sequence task-1 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  codex_args="$(cat "$fixture/tmp/ralph-codex-args.txt")"
+  edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
+  assert_contains "$output" "Using Codex session legacy-123 for task task-1"
+  assert_contains "$codex_args" "resume"
+  assert_contains "$codex_args" "legacy-123"
+  assert_contains "$edited_task" "Assignee: codex"
+  assert_contains "$edited_task" "Labels: session_id:legacy-123"
+  assert_not_contains "$edited_task" "codex@legacy-123"
 }
 
 test_fails_when_worker_reports_turn_failed() {
@@ -538,7 +655,8 @@ test_fails_when_worker_reports_turn_failed() {
   assert_contains "$output" "Codex worker reported failure for task 'task-1': worker exploded"
   edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
   assert_contains "$edited_task" "Status: ○ In Progress"
-  assert_contains "$edited_task" "Assignee: codex@session-fail-123"
+  assert_contains "$edited_task" "Assignee: codex"
+  assert_contains "$edited_task" "Labels: session_id:session-fail-123"
 }
 
 test_fails_when_worker_outcome_is_unclear() {
@@ -559,7 +677,8 @@ test_fails_when_worker_outcome_is_unclear() {
   assert_contains "$output" "Codex worker ended without a clear outcome for task 'task-1'"
   edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
   assert_contains "$edited_task" "Status: ○ In Progress"
-  assert_contains "$edited_task" "Assignee: codex@session-unclear-123"
+  assert_contains "$edited_task" "Assignee: codex"
+  assert_contains "$edited_task" "Labels: session_id:session-unclear-123"
 }
 
 test_exits_successfully_when_worker_returns_completion_promise() {
@@ -659,7 +778,8 @@ test_same_session_verification_reuses_worker_session() {
   assert_contains "$verifier_args" "worker-session-123"
   assert_contains "$verifier_input" '# Ralph Codex Verifier Instructions'
   assert_contains "$edited_task" "Status: ○ Done"
-  assert_contains "$edited_task" "Assignee: codex@worker-session-123"
+  assert_contains "$edited_task" "Assignee: codex"
+  assert_contains "$edited_task" "Labels: session_id:worker-session-123"
 }
 
 test_new_session_verification_uses_fresh_verifier_session() {
@@ -703,7 +823,8 @@ test_fails_when_verifier_rejects_task() {
   assert_contains "$output" "Codex verifier rejected task 'task-1': Review notes: missing regression coverage."
   edited_task="$(cat "$fixture/mock-backlog/task-1.txt")"
   assert_contains "$edited_task" "Status: ○ Review Failed"
-  assert_contains "$edited_task" "Assignee: codex@worker-session-123"
+  assert_contains "$edited_task" "Assignee: codex"
+  assert_contains "$edited_task" "Labels: session_id:worker-session-123"
   assert_contains "$edited_task" "Implementation Notes:"
   assert_contains "$edited_task" "Review notes: missing regression coverage."
 }
@@ -743,10 +864,11 @@ test_sequence_cli_uses_explicit_order
 test_sequence_file_uses_explicit_order
 test_sequence_missing_task_fails_fast
 test_sequence_file_missing_task_fails_fast
-test_captures_fresh_session_id_and_writes_codex_assignee
+test_captures_fresh_session_id_and_writes_session_label
 test_round_trips_fresh_session_into_resume_run
 test_fails_loudly_when_fresh_codex_session_id_is_missing
-test_resumes_prior_session_from_assignee_metadata
+test_resumes_prior_session_from_session_label_metadata
+test_migrates_legacy_assignee_session_metadata_to_session_label
 test_fails_when_worker_reports_turn_failed
 test_fails_when_worker_outcome_is_unclear
 test_exits_successfully_when_worker_returns_completion_promise

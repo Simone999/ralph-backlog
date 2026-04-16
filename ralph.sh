@@ -107,7 +107,33 @@ extract_task_assignee() {
   return 1
 }
 
-extract_codex_session_id() {
+extract_task_labels() {
+  local line
+  while IFS= read -r line; do
+    if [[ "$line" == Labels:* ]]; then
+      printf '%s\n' "${line#Labels: }"
+      return 0
+    fi
+  done <<< "$1"
+  return 1
+}
+
+extract_session_id_from_labels() {
+  local labels="${1:-}"
+  local label
+
+  while IFS= read -r label; do
+    label="$(printf '%s\n' "$label" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    if [[ "$label" =~ ^session_id:(.+)$ ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+  done < <(printf '%s\n' "$labels" | tr ',' '\n')
+
+  return 1
+}
+
+extract_session_id_from_legacy_assignee() {
   local assignee="${1:-}"
   if [[ "$assignee" =~ ^codex@([^[:space:]]+)$ ]]; then
     printf '%s\n' "${BASH_REMATCH[1]}"
@@ -116,27 +142,44 @@ extract_codex_session_id() {
   return 1
 }
 
+extract_task_session_id() {
+  local task_plain="$1"
+  local labels assignee
+
+  labels="$(extract_task_labels "$task_plain" || true)"
+  if [[ -n "$labels" ]]; then
+    extract_session_id_from_labels "$labels" && return 0
+  fi
+
+  assignee="$(extract_task_assignee "$task_plain" || true)"
+  if [[ -n "$assignee" ]]; then
+    extract_session_id_from_legacy_assignee "$assignee" && return 0
+  fi
+
+  return 1
+}
+
 mark_task_in_progress() {
   local task_id="$1"
   local session_id="${2:-}"
 
   if [[ -n "$session_id" ]]; then
-    if ! backlog task edit "$task_id" -s "In Progress" -a "codex@$session_id" >/dev/null; then
+    if ! backlog task edit "$task_id" -s "In Progress" -a "codex" -l "session_id:$session_id" >/dev/null; then
       die "failed to update backlog metadata for task '$task_id'"
     fi
     return 0
   fi
 
-  if ! backlog task edit "$task_id" -s "In Progress" >/dev/null; then
+  if ! backlog task edit "$task_id" -s "In Progress" -a "codex" >/dev/null; then
     die "failed to update backlog metadata for task '$task_id'"
   fi
 }
 
-write_task_session_assignee() {
+write_task_session_metadata() {
   local task_id="$1"
   local session_id="$2"
 
-  if ! backlog task edit "$task_id" -s "In Progress" -a "codex@$session_id" >/dev/null; then
+  if ! backlog task edit "$task_id" -s "In Progress" -a "codex" -l "session_id:$session_id" >/dev/null; then
     die "failed to update backlog metadata for task '$task_id'"
   fi
 }
@@ -145,7 +188,7 @@ mark_task_done() {
   local task_id="$1"
   local session_id="$2"
 
-  if ! backlog task edit "$task_id" -s "Done" -a "codex@$session_id" >/dev/null; then
+  if ! backlog task edit "$task_id" -s "Done" -a "codex" -l "session_id:$session_id" >/dev/null; then
     die "failed to mark backlog task '$task_id' done"
   fi
 }
@@ -155,7 +198,7 @@ mark_task_review_failed() {
   local session_id="$2"
   local review_notes="$3"
 
-  if ! backlog task edit "$task_id" -s "Review Failed" -a "codex@$session_id" --append-notes "$review_notes" >/dev/null; then
+  if ! backlog task edit "$task_id" -s "Review Failed" -a "codex" -l "session_id:$session_id" --append-notes "$review_notes" >/dev/null; then
     die "failed to record verification failure for task '$task_id'"
   fi
 }
@@ -524,8 +567,7 @@ log "Starting Ralph - Tool: $TOOL - Max iterations: $MAX_ITERATIONS"
 for i in $(seq 1 $MAX_ITERATIONS); do
   task_id="$(select_next_task "$((i - 1))")"
   task_plain="$(load_task_plain "$task_id")"
-  assignee="$(extract_task_assignee "$task_plain" || true)"
-  session_id="$(extract_codex_session_id "$assignee" || true)"
+  session_id="$(extract_task_session_id "$task_plain" || true)"
   mark_task_in_progress "$task_id" "$session_id"
   task_plain="$(load_task_plain "$task_id")"
 
@@ -542,7 +584,7 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   if [[ -z "$session_id" ]]; then
     session_id="$(extract_codex_thread_id_from_run_log "$run_file" || true)"
     [[ -n "$session_id" ]] || die "failed to capture Codex session id for task '$task_id'"
-    write_task_session_assignee "$task_id" "$session_id"
+    write_task_session_metadata "$task_id" "$session_id"
   fi
 
   turn_failure="$(extract_turn_failure_from_run_log "$run_file" || true)"

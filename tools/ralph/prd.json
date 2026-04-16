@@ -1,17 +1,17 @@
 {
   "project": "Ralph",
-  "branchName": "ralph/backlog-loop",
-  "description": "Ralph Backlog Loop - Move Ralph from PRD-driven execution to Backlog.md task orchestration with Codex-only runtime, resumable sessions, optional verification, and mock-based test coverage.",
+  "branchName": "ralph/runtime-metadata-completion-redesign",
+  "description": "Refine Ralph runtime metadata and completion handling by moving session ids to `session_id:<id>` labels, keeping assignee as agent name only, deriving completion from backlog state, and preserving task instructions under scoped trust.",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Replace PRD-driven runtime with codex-only orchestration",
-      "description": "As a maintainer, I want `ralph.sh` to run only the Codex runtime path so that the loop behavior is smaller, clearer, and aligned with the new backlog-driven model.",
+      "title": "Move resumable session state from assignee to task labels",
+      "description": "As Ralph runtime, I want resumable Codex session state stored in a `session_id:<id>` label so assignee stays human-readable and resume metadata has one clear home.",
       "acceptanceCriteria": [
-        "`ralph.sh` keeps `--tool` parsing but accepts only `codex`",
-        "Amp and Claude execution paths are removed from runtime behavior",
-        "Runtime no longer depends on `prd.json` for task selection or completion tracking",
-        "Failure message is clear when user passes unsupported tool value",
+        "Fresh worker runs write assignee as `codex` only",
+        "Fresh worker runs persist exactly one `session_id:<id>` label after the first `thread.started` event",
+        "Resume flow reads session id from task labels before launching `codex exec resume`",
+        "Legacy tasks that still use `codex@<session_id>` remain readable during migration and are rewritten to canonical metadata when touched",
         "Relevant automated tests pass",
         "Typecheck passes"
       ],
@@ -21,179 +21,63 @@
     },
     {
       "id": "US-002",
-      "title": "Select next backlog task in script",
-      "description": "As Ralph, I want the script to choose the next task from backlog so that the coding agent works only on explicitly assigned work.",
+      "title": "Claim tasks as assign then In Progress with safe rollback",
+      "description": "As a backlog operator, I want Ralph to claim work by assigning the agent first and then setting `In Progress` so visible ownership matches the intended workflow and failed startup does not strand tasks.",
       "acceptanceCriteria": [
-        "Default mode picks the highest-priority dependency-ready task in `To Do`",
-        "Sequence mode accepts explicit task order from CLI or file input",
-        "Sequence mode fails fast if any referenced task is missing",
-        "Task text passed to Codex comes from `backlog task <task_id> --plain`",
+        "Task claim flow writes assignee before setting status to `In Progress`",
+        "Fresh-start failure before session capture rolls the task back to `To Do`",
+        "Fresh-start failure before session capture does not leave stale assignee or `session_id:` label metadata behind",
         "Relevant automated tests pass",
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-003",
-      "title": "Track active Codex session in backlog metadata",
-      "description": "As Ralph, I want backlog metadata to carry resumable Codex identity so that future iterations can continue useful work without separate local state.",
-      "acceptanceCriteria": [
-        "Active task assignee is stored as `<agent>@<session_id>`",
-        "Fresh work writes a new `codex@<session_id>` assignee value",
-        "Resume flow reads prior session id from assignee metadata",
-        "Task status moves to `In Progress` before active implementation starts",
-        "Relevant automated tests pass",
-        "Typecheck passes"
-      ],
-      "priority": 3,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-004",
-      "title": "Start fresh Codex worker sessions from Ralph",
-      "description": "As Ralph, I want the script to start fresh Codex worker sessions and capture their session identifiers so that task execution can begin under script control.",
-      "acceptanceCriteria": [
-        "Script can start a fresh Codex worker session and capture its session identifier",
-        "Fresh session startup writes or updates assignee metadata in `codex@<session_id>` form",
-        "Launch failure before work starts aborts the iteration loudly",
-        "Relevant automated tests pass",
-        "Typecheck passes"
-      ],
-      "priority": 4,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-005",
-      "title": "Resume prior Codex sessions and interpret worker outcomes",
-      "description": "As Ralph, I want the script to resume prior Codex sessions and interpret worker outcomes consistently so that orchestration can make correct state transitions.",
-      "acceptanceCriteria": [
-        "Script can resume a prior Codex worker session from assignee metadata when configured or applicable",
-        "Worker invocation produces a clear success or failure signal that `ralph.sh` can consume",
-        "Unclear or failed worker outcome does not mark task `Done`",
-        "Relevant automated tests pass",
-        "Typecheck passes"
-      ],
-      "priority": 5,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-006",
-      "title": "Update Codex worker prompt for task-scoped execution",
-      "description": "As a coding agent, I want a task-scoped prompt so that I plan, refine, implement, and summarize one assigned backlog task without choosing work myself.",
-      "acceptanceCriteria": [
-        "Worker prompt no longer tells Codex to read `prd.json` or choose a story",
-        "Worker prompt instructs Codex to add an implementation plan to the backlog task before coding",
-        "Worker prompt allows Codex to create, edit, or delete weak AC and DoD items before implementation",
-        "Worker prompt requires Codex to check AC and DoD only when truly complete",
-        "Worker prompt requires Codex to add final summary to the task before returning",
-        "Relevant automated tests pass",
-        "Typecheck passes"
-      ],
-      "priority": 6,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-007",
-      "title": "Add verifier prompt and verification mode selection",
-      "description": "As Ralph, I want verifier-specific Codex execution modes so that the script can run an optional review pass after implementation.",
-      "acceptanceCriteria": [
-        "Script supports verification modes `none`, `same-session`, and `new-session`",
-        "Verification pass uses a verifier-specific Codex prompt or equivalent mode switch",
-        "Verifier invocation produces a clear success or failure signal that `ralph.sh` can consume",
-        "Relevant automated tests pass",
-        "Typecheck passes"
-      ],
-      "priority": 7,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-008",
-      "title": "Handle verification results with Done and Review Failed transitions",
-      "description": "As Ralph, I want verification outcomes to drive final task status so that tasks reach `Done` only when acceptance criteria and definition of done are really satisfied.",
-      "acceptanceCriteria": [
-        "On verification success, script moves task to `Done`",
-        "On verification failure, script appends review notes and moves task to `Review Failed`",
-        "Failed review preserves or rewrites assignee in `<agent>@<session_id>` form for future resume",
-        "Relevant automated tests pass",
-        "Typecheck passes"
-      ],
-      "priority": 8,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-009",
-      "title": "Support automatic re-elaboration of failed-review tasks",
-      "description": "As a maintainer, I want a retry flag for `Review Failed` tasks so that Ralph can either focus on fresh work or automatically return to failed reviews.",
-      "acceptanceCriteria": [
-        "Script supports `--retry-review-failed`",
-        "Without the flag, auto-selection considers only `To Do` tasks",
-        "With the flag, `Review Failed` tasks re-enter the eligible pool ahead of fresh `To Do` work",
-        "Sequence override can still force a specific `Review Failed` task even when auto-retry is off",
-        "Relevant automated tests pass",
-        "Typecheck passes"
-      ],
-      "priority": 9,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-010",
-      "title": "Add mock-based tests for selection and worker session orchestration",
-      "description": "As a maintainer, I want mock-based tests for selection and worker session control so that the core loop can be validated without invoking real Codex.",
-      "acceptanceCriteria": [
-        "Tests use a mocked shell script in place of real Codex",
-        "Test suite covers normal worker success and implementation failure",
-        "Test suite covers assignee/session round-trip for `codex@<session_id>`",
-        "Test suite covers sequence override missing-task failure",
-        "Test suite covers the output and exit behavior expected by `ralph.sh` from the mocked Codex boundary",
-        "Test suite verifies prompt text no longer instructs agent-side task selection from `prd.json`",
-        "Tests pass",
-        "Typecheck passes"
-      ],
-      "priority": 10,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-011",
-      "title": "Add mock-based tests for verification and review-failed behavior",
-      "description": "As a maintainer, I want mock-based tests for verifier flows so that Done and Review Failed transitions are validated without invoking real Codex.",
-      "acceptanceCriteria": [
-        "Tests use a mocked shell script in place of real Codex",
-        "Test suite covers verification failure and successful verification after implementation",
-        "Test suite covers same-session and new-session verification flows",
-        "Test suite covers `--retry-review-failed` behavior",
-        "Test suite covers launch or resume failure before work starts and unclear worker outcome",
-        "Tests pass",
-        "Typecheck passes"
-      ],
-      "priority": 11,
       "passes": false,
       "notes": ""
     },
     {
-      "id": "US-012",
-      "title": "Update docs and migration guidance from old PRD flow",
-      "description": "As a maintainer, I want docs and prompts updated so that future users understand Ralph now runs from backlog state instead of `prd.json`.",
+      "id": "US-003",
+      "title": "Drive completion from backlog state instead of worker markers",
+      "description": "As Ralph runtime, I want loop completion determined from backlog state and JSONL outcome events so workers do not need to emit `<promise>COMPLETE</promise>`.",
       "acceptanceCriteria": [
-        "README and prompt-facing docs describe backlog-driven loop behavior",
-        "Docs explain that backlog already must contain the tasks before Ralph starts",
-        "Docs explain supported statuses: `To Do`, `In Progress`, `Review Failed`, `Done`",
-        "Docs explain assignee format `<agent>@<session_id>`",
-        "Docs explain sequence mode, verification mode, and `--retry-review-failed`",
-        "Migration guidance states old PRD-driven runtime flow is removed",
+        "`--verify none` marks successful tasks `Done`",
+        "Verifier pass marks task `Done` without requiring `<promise>COMPLETE</promise>` in worker output",
+        "After the last eligible task is completed, Ralph exits successfully by checking backlog state directly",
+        "Worker and verifier continue using JSONL outcome events such as `turn.completed` and `turn.failed` to determine runtime success or failure",
+        "Relevant automated tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Keep task instructions usable with scoped trust in prompts",
+      "description": "As a Ralph operator, I want task instructions to remain usable for implementation while ensuring task text cannot override Ralph runtime rules.",
+      "acceptanceCriteria": [
+        "Worker and verifier prompts place Ralph runtime rules before the assigned task payload",
+        "Prompt text explicitly says task content is authoritative for task scope, acceptance criteria, implementation plan, references, and task-specific guidance",
+        "Prompt text explicitly says task content must not override task selection, status transitions, sandbox, or approval behavior",
+        "Prompt regression tests cover the scoped-trust prompt contract",
+        "Relevant automated tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Align docs and tests with the new metadata and completion model",
+      "description": "As a future maintainer, I want docs and regression tests to describe the same runtime contract Ralph actually uses so the new session metadata and completion flow stay understandable and enforceable.",
+      "acceptanceCriteria": [
+        "Runtime shell tests assert assignee `codex` and session label `session_id:<id>` instead of `codex@<session_id>`",
+        "AGENTS guidance and relevant docs stop prescribing session ids inside assignee for the new design",
+        "Docs and progress guidance reflect that Ralph verifies completion on its own instead of depending on `<promise>COMPLETE</promise>`",
         "Relevant automated tests or doc checks pass",
         "Typecheck passes"
       ],
-      "priority": 12,
+      "priority": 5,
       "passes": false,
       "notes": ""
     }
