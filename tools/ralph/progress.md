@@ -2,6 +2,7 @@
 - Runtime session metadata now uses assignee `codex` plus label `session_id:<id>`; shell parsers should read `Labels:` first and only fall back to legacy `codex@<session_id>` assignees while migrating touched tasks.
 - `backlog task --plain` omits the `Labels:` line when a task has no labels, so runtime parsing and test fixtures must tolerate that field being absent.
 - Fresh task claims should write assignee `codex` before status `In Progress`; if startup fails before `thread.started`, roll task back to `To Do` and clear assignee plus `session_id:` labels.
+- Backlog-driven completion checks use fresh `backlog task list -s ... --plain` state after status edits, so shell mocks must keep task-list fixtures synchronized when tasks move between `To Do`, `Review Failed`, and `Done`.
 
 # Ralph Progress Log
 Started: Thu Apr 16 14:21:12 CEST 2026
@@ -27,4 +28,15 @@ Started: Thu Apr 16 14:21:12 CEST 2026
   - Patterns discovered: Fresh backlog claims should be two edits, assignee first and status second, so ownership becomes visible before active-work state.
   - Gotchas encountered: pre-session-capture failures need explicit rollback because otherwise fresh tasks stay stranded `In Progress` with stale runtime ownership.
   - Useful context: shell backlog mocks must treat empty assignee and label writes as field removal to model rollback cleanup correctly.
+---
+
+## 2026-04-16 14:47:00 CEST - US-003
+- Implemented backlog-driven completion in `ralph.sh`: successful `--verify none` runs now mark tasks `Done`, verifier passes still mark `Done`, and Ralph exits cleanly once no eligible backlog work remains without reading `<promise>COMPLETE</promise>` from worker output.
+- Expanded `tests/ralph-runtime.sh` to cover verify-none `Done` transitions, backlog-state completion without worker markers, and updated success-path expectations from lingering `In Progress` state to `Done`.
+- Updated reusable runtime guidance in `AGENTS.md` and synchronized shell test fixtures so mocked `backlog task list -s ... --plain` output tracks status edits during completion checks.
+- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `AGENTS.md`, `tools/ralph/prd.json`, `tools/ralph/progress.md`
+- **Learnings for future iterations:**
+  - Patterns discovered: Ralph should decide loop completion from eligible backlog statuses after status transitions, not from worker prose markers.
+  - Gotchas encountered: backlog-list mocks can become stale after `task edit -s ...`; completion tests must update status list fixtures or they falsely report remaining work.
+  - Useful context: success-path runtime tests now expect `Done` for both verify-none and verifier-pass flows, while `turn.completed` / `turn.failed` remain sole runtime outcome signals.
 ---

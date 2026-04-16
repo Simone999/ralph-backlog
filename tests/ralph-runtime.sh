@@ -111,7 +111,7 @@ if [[ "${1:-}" == "task" && "${2:-}" == "list" ]]; then
   done
 
   list_file="$mock_dir/task-list-${status// /-}.txt"
-  cat "$list_file"
+  cat "$list_file" 2>/dev/null || true
   exit 0
 fi
 
@@ -121,6 +121,50 @@ if [[ "${1:-}" == "task" && "${2:-}" == "edit" && -n "${3:-}" ]]; then
   [[ -f "$task_file" ]] || exit 1
   printf 'task edit %s %s\n' "$task_id" "$*" >> "$mock_dir/backlog-edit-log.txt"
   shift 3
+
+  read_status() {
+    local status_line
+    status_line="$(grep '^Status:' "$task_file" || true)"
+    status_line="${status_line#Status: ○ }"
+    printf '%s\n' "$status_line"
+  }
+
+  read_priority() {
+    local priority_line
+    priority_line="$(grep '^Priority:' "$task_file" || true)"
+    priority_line="${priority_line#Priority: }"
+    printf '%s\n' "${priority_line^^}"
+  }
+
+  read_title() {
+    local title_line
+    title_line="$(grep '^Task ' "$task_file" || true)"
+    title_line="${title_line#Task }"
+    title_line="${title_line#* - }"
+    printf '%s\n' "$title_line"
+  }
+
+  sync_task_list_entry() {
+    local status="$1"
+    local status_file priority title
+
+    find "$mock_dir" -maxdepth 1 -name 'task-list-*.txt' -print0 | while IFS= read -r -d '' file; do
+      sed -i "/[[:space:]]${task_id^^}[[:space:]]- /d" "$file"
+    done
+
+    case "$status" in
+      "To Do"|"Review Failed")
+        status_file="$mock_dir/task-list-${status// /-}.txt"
+        priority="$(read_priority)"
+        title="$(read_title)"
+        {
+          [[ -f "$status_file" ]] && cat "$status_file"
+          printf '  [%s] %s - %s\n' "$priority" "${task_id^^}" "$title"
+        } > "${status_file}.tmp"
+        mv "${status_file}.tmp" "$status_file"
+        ;;
+    esac
+  }
 
   read_labels() {
     local labels_line
@@ -201,6 +245,7 @@ if [[ "${1:-}" == "task" && "${2:-}" == "edit" && -n "${3:-}" ]]; then
         status="$2"
         shift 2
         sed -i "s/^Status: .*/Status: ○ $status/" "$task_file"
+        sync_task_list_entry "$status"
         ;;
       -a)
         assignee="$2"
@@ -271,7 +316,7 @@ EOF
   chmod +x "$fixture/bin/sleep"
 
   local cmd
-  for cmd in bash cat cp date dirname grep mkdir sed seq tee tr; do
+  for cmd in bash cat cp date dirname find grep mkdir mv sed seq tee tr; do
     ln -s "$(command -v "$cmd")" "$fixture/bin/$cmd"
   done
 
@@ -354,8 +399,9 @@ test_runs_without_prd_or_jq() {
   fixture="$(setup_fixture)"
   trap 'rm -rf "$fixture"' RETURN
   mkdir -p "$fixture/tmp"
-  write_task_list "$fixture" $'To Do:\n  [LOW] TASK-1 - Low todo'
+  write_task_list "$fixture" $'To Do:\n  [LOW] TASK-1 - Low todo\n  [LOW] TASK-2 - Later todo'
   write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Low todo\n==================================================\n\nStatus: ○ To Do\nPriority: Low\nCreated: 2026-04-16 00:00'
+  write_task_plain "$fixture" "task-2" $'File: mock/task-2.md\n\nTask TASK-2 - Later todo\n==================================================\n\nStatus: ○ To Do\nPriority: Low\nCreated: 2026-04-16 00:00'
 
   set +e
   output="$(run_script "$fixture" 1)"
@@ -390,7 +436,7 @@ test_selects_highest_priority_dependency_ready_todo() {
 }
 
 test_default_mode_ignores_review_failed_tasks() {
-  local fixture output status codex_input
+  local fixture output status codex_input edited_task
 
   fixture="$(setup_fixture)"
   trap 'rm -rf "$fixture"' RETURN
@@ -405,11 +451,13 @@ test_default_mode_ignores_review_failed_tasks() {
   status=$?
   set -e
 
-  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  [[ $status -eq 0 ]] || fail "expected ignored review-failed backlog to not block completion"
   codex_input="$(cat "$fixture/tmp/ralph-codex-stdin.txt")"
+  edited_task="$(cat "$fixture/mock-backlog/task-2.txt")"
   assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
   assert_contains "$codex_input" "Task TASK-2 - Fresh todo"
   assert_not_contains "$codex_input" "Task TASK-1 - Failed review task"
+  assert_contains "$edited_task" "Status: ○ Done"
 }
 
 test_retry_review_failed_prefers_review_failed_task() {
@@ -533,10 +581,10 @@ test_captures_fresh_session_id_and_writes_session_label() {
   status=$?
   set -e
 
-  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  [[ $status -eq 0 ]] || fail "expected final successful task to exit cleanly"
   edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
   assert_contains "$output" "Using Codex session session-fresh-123 for task task-1"
-  assert_contains "$edited_task" "Status: ○ In Progress"
+  assert_contains "$edited_task" "Status: ○ Done"
   assert_contains "$edited_task" "Assignee: codex"
   assert_contains "$edited_task" "Labels: session_id:session-fresh-123"
   assert_not_contains "$edited_task" "codex@session-fresh-123"
@@ -556,7 +604,7 @@ test_claims_fresh_task_by_assigning_before_marking_in_progress() {
   status=$?
   set -e
 
-  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  [[ $status -eq 0 ]] || fail "expected final successful task to exit cleanly"
   first_edit="$(sed -n '1p' "$fixture/mock-backlog/backlog-edit-log.txt")"
   second_edit="$(sed -n '2p' "$fixture/mock-backlog/backlog-edit-log.txt")"
   assert_contains "$output" "Using Codex session session-fresh-123 for task task-1"
@@ -580,7 +628,7 @@ test_round_trips_fresh_session_into_resume_run() {
   status=$?
   set -e
 
-  [[ $status -eq 1 ]] || fail "expected two-iteration round trip to stop at max iterations"
+  [[ $status -eq 0 ]] || fail "expected sequence to finish once forced work is done"
   first_args="$(cat "$fixture/tmp/ralph-codex-args-1.txt")"
   second_args="$(cat "$fixture/tmp/ralph-codex-args-2.txt")"
   edited_task="$(cat "$fixture/mock-backlog/task-1.txt")"
@@ -588,7 +636,7 @@ test_round_trips_fresh_session_into_resume_run() {
   assert_not_contains "$first_args" "resume"
   assert_contains "$second_args" "resume"
   assert_contains "$second_args" "session-roundtrip-123"
-  assert_contains "$edited_task" "Status: ○ In Progress"
+  assert_contains "$edited_task" "Status: ○ Done"
   assert_contains "$edited_task" "Assignee: codex"
   assert_contains "$edited_task" "Labels: session_id:session-roundtrip-123"
 }
@@ -658,7 +706,7 @@ test_resumes_prior_session_from_session_label_metadata() {
   assert_contains "$codex_args" "exec"
   assert_contains "$codex_args" "resume"
   assert_contains "$codex_args" "resume-123"
-  assert_contains "$edited_task" "Status: ○ In Progress"
+  assert_contains "$edited_task" "Status: ○ Done"
   assert_contains "$edited_task" "Assignee: codex"
   assert_contains "$edited_task" "Labels: session_id:resume-123"
 }
@@ -677,12 +725,13 @@ test_migrates_legacy_assignee_session_metadata_to_session_label() {
   status=$?
   set -e
 
-  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  [[ $status -eq 0 ]] || fail "expected final successful task to exit cleanly"
   codex_args="$(cat "$fixture/tmp/ralph-codex-args.txt")"
   edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
   assert_contains "$output" "Using Codex session legacy-123 for task task-1"
   assert_contains "$codex_args" "resume"
   assert_contains "$codex_args" "legacy-123"
+  assert_contains "$edited_task" "Status: ○ Done"
   assert_contains "$edited_task" "Assignee: codex"
   assert_contains "$edited_task" "Labels: session_id:legacy-123"
   assert_not_contains "$edited_task" "codex@legacy-123"
@@ -732,7 +781,7 @@ test_fails_when_worker_outcome_is_unclear() {
   assert_contains "$edited_task" "Labels: session_id:session-unclear-123"
 }
 
-test_exits_successfully_when_worker_returns_completion_promise() {
+test_exits_successfully_when_last_eligible_task_is_done() {
   local fixture output status codex_args
 
   fixture="$(setup_fixture)"
@@ -742,13 +791,13 @@ test_exits_successfully_when_worker_returns_completion_promise() {
   write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Complete task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
 
   set +e
-  output="$(MOCK_CODEX_OUTPUT=$'{"type":"thread.started","thread_id":"session-complete-123"}\n{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}' MOCK_CODEX_LAST_MESSAGE=$'<promise>COMPLETE</promise>\nAll stories done.' run_script "$fixture" 5)"
+  output="$(MOCK_CODEX_OUTPUT=$'{"type":"thread.started","thread_id":"session-complete-123"}\n{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}' run_script "$fixture" 5)"
   status=$?
   set -e
 
-  [[ $status -eq 0 ]] || fail "expected completion promise to exit successfully"
+  [[ $status -eq 0 ]] || fail "expected last eligible task to exit successfully"
   codex_args="$(cat "$fixture/tmp/ralph-codex-args.txt")"
-  assert_contains "$output" "Ralph completed all tasks!"
+  assert_contains "$output" "Ralph completed all eligible backlog tasks."
   assert_contains "$output" "Completed at iteration 1 of 5"
   assert_contains "$codex_args" "exec"
 }
@@ -767,7 +816,7 @@ test_passes_task_scoped_worker_prompt_to_codex() {
   status=$?
   set -e
 
-  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  [[ $status -eq 0 ]] || fail "expected final successful task to exit cleanly"
   codex_input="$(cat "$fixture/tmp/ralph-codex-stdin.txt")"
   assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
   assert_contains "$codex_input" 'Assigned backlog task from `backlog task task-1 --plain`:'
@@ -785,7 +834,7 @@ test_passes_task_scoped_worker_prompt_to_codex() {
 }
 
 test_verification_none_skips_verifier_pass() {
-  local fixture output status codex_input
+  local fixture output status codex_input edited_task
 
   fixture="$(setup_fixture)"
   trap 'rm -rf "$fixture"' RETURN
@@ -798,10 +847,12 @@ test_verification_none_skips_verifier_pass() {
   status=$?
   set -e
 
-  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  [[ $status -eq 0 ]] || fail "expected final successful task to exit cleanly"
   codex_input="$(cat "$fixture/tmp/ralph-codex-stdin-1.txt")"
+  edited_task="$(cat "$fixture/mock-backlog/task-1.txt")"
   assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
   assert_contains "$codex_input" '# Ralph Codex Worker Instructions'
+  assert_contains "$edited_task" "Status: ○ Done"
   [[ ! -f "$fixture/tmp/ralph-codex-stdin-2.txt" ]] || fail "expected verifier pass to stay disabled in --verify none mode"
 }
 
@@ -819,7 +870,7 @@ test_same_session_verification_reuses_worker_session() {
   status=$?
   set -e
 
-  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  [[ $status -eq 0 ]] || fail "expected final successful task to exit cleanly"
   verifier_args="$(cat "$fixture/tmp/ralph-codex-args-2.txt")"
   verifier_input="$(cat "$fixture/tmp/ralph-codex-stdin-2.txt")"
   edited_task="$(cat "$fixture/mock-backlog/task-1.txt")"
@@ -847,7 +898,7 @@ test_new_session_verification_uses_fresh_verifier_session() {
   status=$?
   set -e
 
-  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  [[ $status -eq 0 ]] || fail "expected final successful task to exit cleanly"
   verifier_args="$(cat "$fixture/tmp/ralph-codex-args-2.txt")"
   verifier_input="$(cat "$fixture/tmp/ralph-codex-stdin-2.txt")"
   assert_contains "$output" "Using Codex verification session verifier-session-456 for task task-1"
@@ -924,7 +975,7 @@ test_resumes_prior_session_from_session_label_metadata
 test_migrates_legacy_assignee_session_metadata_to_session_label
 test_fails_when_worker_reports_turn_failed
 test_fails_when_worker_outcome_is_unclear
-test_exits_successfully_when_worker_returns_completion_promise
+test_exits_successfully_when_last_eligible_task_is_done
 test_passes_task_scoped_worker_prompt_to_codex
 test_verification_none_skips_verifier_pass
 test_same_session_verification_reuses_worker_session

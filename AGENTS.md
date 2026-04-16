@@ -125,6 +125,7 @@ A task is done only if:
 - If a fresh worker launch fails before `thread.started` is captured, roll task back to `To Do` and clear assignee plus `session_id:` label metadata so startup failures do not strand backlog state.
 - To test session round-trips in `tests/ralph-runtime.sh`, force the same task twice via `--sequence task-1,task-1`; first iteration should capture `thread.started`, second should resume with the persisted `session_id:<id>` label.
 - When consuming `codex exec --json` logs in shell, treat `turn.completed` as success and `turn.failed` as failure, and parse with `while IFS= read -r line || [[ -n "$line" ]]` so a final event without trailing newline is not dropped.
+- Backlog-driven completion now checks fresh `backlog task list -s ... --plain` state after status edits, so shell fixtures must keep mocked task-list outputs synchronized when tasks move between statuses.
 - Verification runs use `prompt-verifier.md`; verifier result comes from Codex `-o` last-message output with `<verification>PASS</verification>` or `<verification>FAIL</verification>`, while `--verify same-session` resumes worker session and `--verify new-session` starts fresh.
 - Verification pass should move task to `Done`; verification failure should append reviewer feedback with `backlog task edit --append-notes`, move task to `Review Failed`, and keep worker label `session_id:<id>` for later resume.
 - When changing `prompt-codex.md`, extend `tests/ralph-runtime.sh` to assert Codex stdin contains required worker instructions and no stale PRD-selection text.

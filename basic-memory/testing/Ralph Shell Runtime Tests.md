@@ -22,7 +22,7 @@ Likely future searches this note should answer: "how to test ralph.sh without re
 - [pattern] Treat `turn.completed` as worker success and `turn.failed` as worker failure when consuming `codex exec --json` output; shell tests should model both events explicitly #codex #jsonl #testing
 - [gotcha] Codex JSONL logs may end without a trailing newline, so shell parsers must read with `while IFS= read -r line || [[ -n "$line" ]]` or the final outcome event can be missed #shell #jsonl
 
-- [pattern] Fresh-session runtime tests should feed mocked `codex exec --json` output with a `thread.started` event, then assert Ralph persists assignee `codex` plus label `session_id:<thread_id>` after launch while leaving the task `In Progress` throughout #backlog #session #testing
+- [pattern] Fresh-session runtime tests should feed mocked `codex exec --json` output with a `thread.started` event, then assert Ralph persists assignee `codex` plus label `session_id:<thread_id>` after launch and transitions successful runs to `Done` unless more eligible work remains #backlog #session #testing
 - [reason] Reloading `backlog task <id> --plain` after metadata edits keeps worker prompt text aligned with current assignee and status #backlog #prompt
 
 - [pattern] `ralph.sh` regression tests can run as plain shell scripts under `tests/` with `bash tests/ralph-runtime.sh` #ralph #testing
@@ -48,3 +48,4 @@ Likely future searches this note should answer: "how to test ralph.sh without re
 - [pattern] When `ralph.sh` selects from more than one backlog status, shell fixtures should provide separate mocked `backlog task list -s "<status>" --sort priority --plain` outputs for each status so tests exercise real selection order instead of a shared list shortcut #backlog #testing #status
 
 - [gotcha] `backlog task --plain` omits the `Labels:` line when a task has no labels, so shell parsers and fixtures must tolerate missing label metadata on fresh tasks #backlog #labels #testing
+- [gotcha] Backlog-driven completion checks use fresh `backlog task list -s ... --plain` state after status edits, so shell mocks must update task-list fixtures when tasks move to `Done` or `Review Failed`; stale lists make Ralph think work still remains #backlog #testing #completion

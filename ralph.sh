@@ -319,6 +319,36 @@ list_task_ids_for_status() {
   done <<< "$task_list"
 }
 
+status_has_listed_tasks() {
+  local status="$1"
+  local task_id
+
+  while IFS= read -r task_id; do
+    [[ -n "$task_id" ]] || continue
+    return 0
+  done < <(list_task_ids_for_status "$status")
+
+  return 1
+}
+
+eligible_work_remaining() {
+  local next_iteration_index="$1"
+
+  if (( next_iteration_index < ${#SEQUENCE_TASKS[@]} )); then
+    return 0
+  fi
+
+  if status_has_listed_tasks "To Do"; then
+    return 0
+  fi
+
+  if (( RETRY_REVIEW_FAILED )) && status_has_listed_tasks "Review Failed"; then
+    return 0
+  fi
+
+  return 1
+}
+
 select_dependency_ready_task_from_status() {
   local status="$1"
   local task_id task_plain
@@ -633,16 +663,17 @@ for i in $(seq 1 $MAX_ITERATIONS); do
       mark_task_review_failed "$task_id" "$session_id" "$VERIFICATION_NOTES"
       die "Codex verifier rejected task '$task_id': $VERIFICATION_NOTES"
     fi
+  else
+    mark_task_done "$task_id" "$session_id"
   fi
-  
-  # Check for completion signal
-  if echo "$OUTPUT" | grep -q "<promise>COMPLETE</promise>"; then
+
+  if ! eligible_work_remaining "$i"; then
     echo ""
-    log "Ralph completed all tasks!"
+    log "Ralph completed all eligible backlog tasks."
     log "Completed at iteration $i of $MAX_ITERATIONS"
     exit 0
   fi
-  
+
   log "Iteration $i complete. Continuing..."
   sleep 2
 done
