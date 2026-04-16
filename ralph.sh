@@ -170,16 +170,27 @@ mark_task_in_progress() {
     return 0
   fi
 
-  if ! backlog task edit "$task_id" -s "In Progress" -a "codex" >/dev/null; then
+  if ! backlog task edit "$task_id" -a "codex" >/dev/null; then
     die "failed to update backlog metadata for task '$task_id'"
   fi
+
+  if ! backlog task edit "$task_id" -s "In Progress" >/dev/null; then
+    rollback_fresh_task_claim "$task_id" || die "failed to roll back fresh task claim for task '$task_id'"
+    die "failed to update backlog metadata for task '$task_id'"
+  fi
+}
+
+rollback_fresh_task_claim() {
+  local task_id="$1"
+
+  backlog task edit "$task_id" -s "To Do" -a "" -l "" >/dev/null
 }
 
 write_task_session_metadata() {
   local task_id="$1"
   local session_id="$2"
 
-  if ! backlog task edit "$task_id" -s "In Progress" -a "codex" -l "session_id:$session_id" >/dev/null; then
+  if ! backlog task edit "$task_id" -l "session_id:$session_id" >/dev/null; then
     die "failed to update backlog metadata for task '$task_id'"
   fi
 }
@@ -396,9 +407,11 @@ run_codex(){
 
   if ! printf '%s' "$prompt" | "${cmd[@]}" > "$run_file"; then
     if [[ -n "$session_id" ]]; then
-      die "failed to resume Codex $run_kind for task '$task_id'. Check '$run_file' for details."
+      printf "error: failed to resume Codex %s for task '%s'. Check '%s' for details.\n" "$run_kind" "$task_id" "$run_file" >&2
+      return 1
     fi
-    die "failed to start Codex $run_kind for task '$task_id'. Check '$run_file' for details."
+    printf "error: failed to start Codex %s for task '%s'. Check '%s' for details.\n" "$run_kind" "$task_id" "$run_file" >&2
+    return 1
   fi
   cat "$last_message_file" 2>/dev/null || true
 }
@@ -422,7 +435,9 @@ run_codex_verification() {
     verifier_session_id="$worker_session_id"
   fi
 
-  verifier_output="$(run_codex "$task_id" "$verifier_prompt" "$verifier_run_file" "verifier" "$verifier_session_id")"
+  if ! verifier_output="$(run_codex "$task_id" "$verifier_prompt" "$verifier_run_file" "verifier" "$verifier_session_id")"; then
+    return 1
+  fi
 
   if [[ -z "$verifier_session_id" ]]; then
     verifier_session_id="$(extract_codex_thread_id_from_run_log "$verifier_run_file" || true)"
@@ -568,6 +583,10 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   task_id="$(select_next_task "$((i - 1))")"
   task_plain="$(load_task_plain "$task_id")"
   session_id="$(extract_task_session_id "$task_plain" || true)"
+  fresh_start=0
+  if [[ -z "$session_id" ]]; then
+    fresh_start=1
+  fi
   mark_task_in_progress "$task_id" "$session_id"
   task_plain="$(load_task_plain "$task_id")"
 
@@ -579,11 +598,19 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   prompt_template="$(cat "$SCRIPT_DIR/prompt-codex.md")"
   prompt=$(printf 'Assigned backlog task from `backlog task %s --plain`:\n\n%s\n\n%s' "$task_id" "$task_plain" "$prompt_template")
   run_file="$SCRIPT_DIR/runs/$(date -u '+ralph-run-%s.jsonl')"
-  OUTPUT=$(run_codex "$task_id" "$prompt" "$run_file" "worker" "$session_id")
+  if ! OUTPUT=$(run_codex "$task_id" "$prompt" "$run_file" "worker" "$session_id"); then
+    if (( fresh_start )); then
+      rollback_fresh_task_claim "$task_id" || die "failed to roll back fresh task claim for task '$task_id'"
+    fi
+    exit 1
+  fi
 
   if [[ -z "$session_id" ]]; then
     session_id="$(extract_codex_thread_id_from_run_log "$run_file" || true)"
-    [[ -n "$session_id" ]] || die "failed to capture Codex session id for task '$task_id'"
+    if [[ -z "$session_id" ]]; then
+      rollback_fresh_task_claim "$task_id" || die "failed to roll back fresh task claim for task '$task_id'"
+      die "failed to capture Codex session id for task '$task_id'"
+    fi
     write_task_session_metadata "$task_id" "$session_id"
   fi
 

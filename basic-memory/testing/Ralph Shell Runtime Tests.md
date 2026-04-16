@@ -35,6 +35,10 @@ Likely future searches this note should answer: "how to test ralph.sh without re
 - [pattern] Prompt migrations should be regression-tested through mocked Codex stdin, asserting required worker instructions are present and stale `prd.json` or task-selection text is absent #prompt #testing
 - [reason] `ralph.sh` prepends assigned task text before `prompt-codex.md`, so stdin assertions catch both prompt drift and wrapper drift in one shell-level test #prompt #shell
 
+- [pattern] Fresh-task claim flow should call `backlog task edit -a codex` before the separate `-s "In Progress"` edit so visible ownership appears before active-work status in backlog history #backlog #workflow #testing
+- [pattern] If a fresh worker launch fails before Ralph captures `thread.started`, runtime should roll the task back to `To Do` and clear both assignee and `session_id:` label metadata; shell regressions should cover both missing-session-id and failed-start paths #backlog #rollback #session #testing
+- [gotcha] Shell backlog mocks need to treat empty assignee and empty label edits as field removal so rollback assertions match real task metadata cleanup instead of leaving blank placeholder lines #mocking #testing #backlog
+
 ## Relations
 - relates_to [[Ralph Backlog Loop Design Spec]]
 - relates_to [[Ralph Backlog Loop Design Decisions]]

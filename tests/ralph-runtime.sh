@@ -119,6 +119,7 @@ if [[ "${1:-}" == "task" && "${2:-}" == "edit" && -n "${3:-}" ]]; then
   task_id="${3,,}"
   task_file="$mock_dir/${task_id}.txt"
   [[ -f "$task_file" ]] || exit 1
+  printf 'task edit %s %s\n' "$task_id" "$*" >> "$mock_dir/backlog-edit-log.txt"
   shift 3
 
   read_labels() {
@@ -204,7 +205,9 @@ if [[ "${1:-}" == "task" && "${2:-}" == "edit" && -n "${3:-}" ]]; then
       -a)
         assignee="$2"
         shift 2
-        if grep -q '^Assignee:' "$task_file"; then
+        if [[ -z "$assignee" ]]; then
+          sed -i '/^Assignee: /d' "$task_file"
+        elif grep -q '^Assignee:' "$task_file"; then
           sed -i "s/^Assignee: .*/Assignee: $assignee/" "$task_file"
         else
           printf '\nAssignee: %s\n' "$assignee" >> "$task_file"
@@ -539,6 +542,30 @@ test_captures_fresh_session_id_and_writes_session_label() {
   assert_not_contains "$edited_task" "codex@session-fresh-123"
 }
 
+test_claims_fresh_task_by_assigning_before_marking_in_progress() {
+  local fixture output status first_edit second_edit
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Fresh task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Fresh task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(MOCK_CODEX_OUTPUT=$'{"type":"thread.started","thread_id":"session-fresh-123"}\n{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}' run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  first_edit="$(sed -n '1p' "$fixture/mock-backlog/backlog-edit-log.txt")"
+  second_edit="$(sed -n '2p' "$fixture/mock-backlog/backlog-edit-log.txt")"
+  assert_contains "$output" "Using Codex session session-fresh-123 for task task-1"
+  assert_contains "$first_edit" 'task edit task-1 task edit task-1 -a codex'
+  assert_not_contains "$first_edit" '-s In Progress'
+  assert_contains "$second_edit" 'task edit task-1 task edit task-1 -s In Progress'
+  assert_not_contains "$second_edit" '-a codex'
+}
+
 test_round_trips_fresh_session_into_resume_run() {
   local fixture output status first_args second_args edited_task
 
@@ -583,7 +610,31 @@ test_fails_loudly_when_fresh_codex_session_id_is_missing() {
   [[ $status -ne 0 ]] || fail "expected missing session id to fail"
   assert_contains "$output" "failed to capture Codex session id for task 'task-1'"
   edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
-  assert_contains "$edited_task" "Status: ○ In Progress"
+  assert_contains "$edited_task" "Status: ○ To Do"
+  assert_not_contains "$edited_task" "Assignee:"
+  assert_not_contains "$edited_task" "Labels:"
+}
+
+test_rolls_back_fresh_claim_when_worker_fails_to_start() {
+  local fixture output status edited_task
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Fresh task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Fresh task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(MOCK_CODEX_EXIT=1 run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -ne 0 ]] || fail "expected failed worker start to fail"
+  assert_contains "$output" "failed to start Codex worker for task 'task-1'"
+  edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
+  assert_contains "$edited_task" "Status: ○ To Do"
+  assert_not_contains "$edited_task" "Assignee:"
+  assert_not_contains "$edited_task" "Labels:"
 }
 
 test_resumes_prior_session_from_session_label_metadata() {
@@ -865,8 +916,10 @@ test_sequence_file_uses_explicit_order
 test_sequence_missing_task_fails_fast
 test_sequence_file_missing_task_fails_fast
 test_captures_fresh_session_id_and_writes_session_label
+test_claims_fresh_task_by_assigning_before_marking_in_progress
 test_round_trips_fresh_session_into_resume_run
 test_fails_loudly_when_fresh_codex_session_id_is_missing
+test_rolls_back_fresh_claim_when_worker_fails_to_start
 test_resumes_prior_session_from_session_label_metadata
 test_migrates_legacy_assignee_session_metadata_to_session_label
 test_fails_when_worker_reports_turn_failed
