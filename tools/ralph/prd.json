@@ -1,85 +1,187 @@
 {
-  "project": "Ralph",
-  "branchName": "ralph/runtime-metadata-completion-redesign",
-  "description": "Refine Ralph runtime metadata and completion handling by moving session ids to `session_id:<id>` labels, keeping assignee as agent name only, deriving completion from backlog state, and preserving task instructions under scoped trust.",
+  "project": "ralph-backlog",
+  "branchName": "ralph/runtime-review-flow",
+  "description": "Harden Ralph backlog runtime with ordered task selection, Review status, script-side completion verification, and schema-validated verifier output.",
   "userStories": [
     {
-      "id": "US-001",
-      "title": "Move resumable session state from assignee to task labels",
-      "description": "As Ralph runtime, I want resumable Codex session state stored in a `session_id:<id>` label so assignee stays human-readable and resume metadata has one clear home.",
+      "id": "US-007",
+      "title": "Add Review status to backlog config",
+      "description": "As a Ralph operator, I need backlog status order to include `Review` so the queue can represent pre-verifier review explicitly and later runtime changes can rely on status order from `backlog/config.yml`.",
       "acceptanceCriteria": [
-        "Fresh worker runs write assignee as `codex` only",
-        "Fresh worker runs persist exactly one `session_id:<id>` label after the first `thread.started` event",
-        "Resume flow reads session id from task labels before launching `codex exec resume`",
-        "Legacy tasks that still use `codex@<session_id>` remain readable during migration and are rewritten to canonical metadata when touched",
-        "Relevant automated tests pass",
+        "`backlog/config.yml` statuses are exactly `[\"To Do\", \"In Progress\", \"Review\", \"Review Failed\", \"Done\"]`",
+        "No unrelated backlog config values change",
         "Typecheck passes"
       ],
       "priority": 1,
-      "passes": true,
-      "notes": ""
+      "passes": false,
+      "notes": "Baseline: `backlog/config.yml` currently has `To Do`, `In Progress`, `Review Failed`, `Done` and no `Review` state. Target: add `Review` between `In Progress` and `Review Failed` because the approved runtime plan uses backlog status order as queue precedence. Files to inspect before editing: `backlog/config.yml`, `basic-memory/plans/Ralph Queue-Driven Review Flow Plan.md` (Summary, Runtime policy and config, Interfaces), and `basic-memory/testing/Ralph Workflow Implementation Audit.md` for current-state drift. A dumb agent should treat this as a pure config change with no runtime code in scope."
     },
     {
-      "id": "US-002",
-      "title": "Claim tasks as assign then In Progress with safe rollback",
-      "description": "As a backlog operator, I want Ralph to claim work by assigning the agent first and then setting `In Progress` so visible ownership matches the intended workflow and failed startup does not strand tasks.",
+      "id": "US-008",
+      "title": "Add Ralph runtime config file and load it",
+      "description": "As a Ralph operator, I need stable runtime policy in a root `config.yaml` so allowed assignees, review defaults, and fix-loop limits are static config instead of hardcoded shell behavior.",
       "acceptanceCriteria": [
-        "Task claim flow writes assignee before setting status to `In Progress`",
-        "Fresh-start failure before session capture rolls the task back to `To Do`",
-        "Fresh-start failure before session capture does not leave stale assignee or `session_id:` label metadata behind",
-        "Relevant automated tests pass",
+        "Repo root contains `config.yaml` with keys `selection.allowed_assignees`, `review.no_review_terminal_status`, and `review.max_fix_attempts`",
+        "Default values are `allowed_assignees: [codex]`, `no_review_terminal_status: done`, and `max_fix_attempts: 2`",
+        "`ralph.sh` loads `config.yaml` via `python3` plus PyYAML before task selection and review handling",
+        "bash `tests/ralph-runtime.sh` passes",
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": true,
-      "notes": ""
+      "passes": false,
+      "notes": "Baseline: runtime policy is currently hardcoded in `ralph.sh`; there is no root `config.yaml`. Target config shape comes from `basic-memory/plans/Ralph Queue-Driven Review Flow Plan.md` under Runtime policy and config. Root `config.yaml` is Ralph-only and separate from Backlog's own `backlog/config.yml`. Likely files: `ralph.sh`, `tests/ralph-runtime.sh`, new `config.yaml`. Use `tools/ralph/progress.md` only as evidence of already-landed runtime work; do not update it in this task."
     },
     {
-      "id": "US-003",
-      "title": "Drive completion from backlog state instead of worker markers",
-      "description": "As Ralph runtime, I want loop completion determined from backlog state and JSONL outcome events so workers do not need to emit `<promise>COMPLETE</promise>`.",
+      "id": "US-009",
+      "title": "Select no-sequence work from one ordered backlog list pass",
+      "description": "As a Ralph operator, I need no-sequence selection to consume one ordered `backlog task list --sort priority --plain` result and preserve its emitted order so the runtime follows backlog ordering instead of manually iterating statuses.",
       "acceptanceCriteria": [
-        "`--verify none` marks successful tasks `Done`",
-        "Verifier pass marks task `Done` without requiring `<promise>COMPLETE</promise>` in worker output",
-        "After the last eligible task is completed, Ralph exits successfully by checking backlog state directly",
-        "Worker and verifier continue using JSONL outcome events such as `turn.completed` and `turn.failed` to determine runtime success or failure",
-        "Relevant automated tests pass",
+        "No-sequence mode issues one `backlog task list --sort priority --plain` call to build the candidate queue",
+        "Candidate order follows the emitted backlog order exactly",
+        "Ralph loads `backlog task <id> --plain` only for candidate IDs from that ordered list",
+        "bash `tests/ralph-runtime.sh` passes",
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": true,
-      "notes": ""
+      "passes": false,
+      "notes": "Baseline: `ralph.sh` currently calls `backlog task list -s <status> --sort priority --plain` separately for `To Do` and optionally `Review Failed`. Target: one ordered list pass, then detail filtering. Read `basic-memory/plans/Ralph Queue-Driven Review Flow Plan.md` under Selection and task lifecycle and Test Plan. Update shell fixtures so `backlog task list` without `-s` returns grouped statuses in backlog-config order. This story is about queue construction only; do not yet change candidate validity rules beyond what is needed to preserve one-pass ordering."
     },
     {
-      "id": "US-004",
-      "title": "Keep task instructions usable with scoped trust in prompts",
-      "description": "As a Ralph operator, I want task instructions to remain usable for implementation while ensuring task text cannot override Ralph runtime rules.",
+      "id": "US-010",
+      "title": "Filter candidates, revalidate before launch, and claim atomically",
+      "description": "As a Ralph operator, I need candidate validity checks and claim behavior tightened so Ralph only launches Codex for allowed tasks and claims ownership in one atomic backlog edit.",
       "acceptanceCriteria": [
-        "Worker and verifier prompts place Ralph runtime rules before the assigned task payload",
-        "Prompt text explicitly says task content is authoritative for task scope, acceptance criteria, implementation plan, references, and task-specific guidance",
-        "Prompt text explicitly says task content must not override task selection, status transitions, sandbox, or approval behavior",
-        "Prompt regression tests cover the scoped-trust prompt contract",
-        "Relevant automated tests pass",
+        "Candidate selection accepts only allowed-status, dependency-ready tasks whose assignee is empty or listed in `selection.allowed_assignees`",
+        "Ralph reloads the chosen task immediately before Codex launch and skips invalidated non-sequence tasks",
+        "Sequence mode fails fast if a forced task is no longer valid",
+        "Claim uses one `backlog task edit` call to set assignee and status together",
+        "bash `tests/ralph-runtime.sh` passes",
         "Typecheck passes"
       ],
       "priority": 4,
       "passes": false,
-      "notes": ""
+      "notes": "Baseline: current claim flow in `ralph.sh` is intentionally two-step (`-a` then `-s`) and sequence validation only checks task existence. User explicitly changed this requirement: claim must now be atomic, and selected tasks must be revalidated just before Codex launch. Candidate rules come from `basic-memory/plans/Ralph Queue-Driven Review Flow Plan.md` under Selection and task lifecycle. Relevant files: `ralph.sh`, `tests/ralph-runtime.sh`, `config.yaml`. Keep scope to candidate filtering, pre-launch revalidation, and atomic claim only."
     },
     {
-      "id": "US-005",
-      "title": "Align docs and tests with the new metadata and completion model",
-      "description": "As a future maintainer, I want docs and regression tests to describe the same runtime contract Ralph actually uses so the new session metadata and completion flow stay understandable and enforceable.",
+      "id": "US-011",
+      "title": "Remove legacy assignee fallback and switch JSON parsing to jq",
+      "description": "As a Ralph operator, I need runtime state read only from canonical `session_id:<id>` labels and Codex JSONL parsed with `jq` so session handling stops depending on legacy assignee encoding and brittle shell regexes.",
       "acceptanceCriteria": [
-        "Runtime shell tests assert assignee `codex` and session label `session_id:<id>` instead of `codex@<session_id>`",
-        "AGENTS guidance and relevant docs stop prescribing session ids inside assignee for the new design",
-        "Docs and progress guidance reflect that Ralph verifies completion on its own instead of depending on `<promise>COMPLETE</promise>`",
-        "Relevant automated tests or doc checks pass",
+        "Resume state comes only from `Labels: session_id:<id>` metadata",
+        "Legacy `codex@<session_id>` assignee fallback is removed from runtime and shell tests",
+        "Codex JSONL parsing uses `jq` for `thread.started`, `turn.completed`, and `turn.failed` extraction",
+        "bash `tests/ralph-runtime.sh` passes",
         "Typecheck passes"
       ],
       "priority": 5,
       "passes": false,
-      "notes": ""
+      "notes": "Baseline: `tools/ralph/progress.md` says canonical session labels already landed, but `ralph.sh`, `AGENTS.md`, and shell tests still support legacy `codex@...` fallback. This story is cleanup plus parser hardening. Read `tools/ralph/progress.md` entries for US-001, `basic-memory/testing/Ralph Workflow Implementation Audit.md`, and the plan note sections Selection and task lifecycle plus JSON handling. Update tests that currently prove legacy migration or no-`jq` behavior; after this change those tests should be removed or rewritten."
+    },
+    {
+      "id": "US-012",
+      "title": "Replace temp-file handling with mktemp and remove iteration sleep",
+      "description": "As a Ralph operator, I need safe temporary last-message files and no fixed iteration pause so parallel or repeated runs do not collide and the loop does not sleep unnecessarily.",
+      "acceptanceCriteria": [
+        "Last-message files are created with `mktemp` and cleaned up with `trap`",
+        "Fixed iteration `sleep` is removed from `ralph.sh`",
+        "Required-command checks and test fixtures include `jq`, `mktemp`, and `python3`",
+        "bash `tests/ralph-runtime.sh` passes",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "Baseline: `basic-memory/testing/Ralph Workflow Implementation Audit.md` notes timestamp-based `/tmp/ralph-last-message-<epoch>.txt` temp files and `sleep 2` between iterations. Target comes from the approved plan's JSON handling, verifier contract, and temp files section. Likely files: `ralph.sh`, `tests/ralph-runtime.sh`, possibly `basic-memory/testing/Ralph Shell Runtime Tests.md` if fixture guidance needs updating. This is runtime hygiene; do not mix in verifier JSON or selection rewrites here."
+    },
+    {
+      "id": "US-013",
+      "title": "Add script-side backlog task verification before completion",
+      "description": "As a Ralph operator, I need Ralph itself to verify required backlog task state after the worker returns so completion does not depend only on prompt compliance.",
+      "acceptanceCriteria": [
+        "After each worker turn, Ralph verifies from `backlog task <id> --plain` that `Implementation Plan` and `Final Summary` are present and non-empty",
+        "Ralph verifies acceptance criteria and definition-of-done items are defined and checked before final status transition",
+        "Ralph verifies expected assignee and `session_id:<id>` metadata are still present before final status transition",
+        "bash `tests/ralph-runtime.sh` passes",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "Baseline: `prompt-codex.md` instructs the worker to write plan/final summary and check AC/DoD, but `basic-memory/testing/Ralph Workflow Implementation Audit.md` says shell does not enforce any of this. Verification source must be backlog plain task text, not worker prose. Relevant files: `ralph.sh`, `tests/ralph-runtime.sh`, maybe prompt expectations if wording must align. Read the plan note section Script verification and fix loop before editing."
+    },
+    {
+      "id": "US-014",
+      "title": "Resume worker to fix script-verification gaps",
+      "description": "As a Ralph operator, I need Ralph to reopen the worker with concrete remediation instructions when script-side verification finds missing task updates, rather than failing immediately or pretending the task is complete.",
+      "acceptanceCriteria": [
+        "When script verification fails, Ralph resumes the worker with a prompt that lists the missing items",
+        "Retry count is limited by `review.max_fix_attempts` from `config.yaml`",
+        "If script-verification retries are exhausted, the task moves to `Review Failed` and preserves `session_id:<id>` metadata",
+        "bash `tests/ralph-runtime.sh` passes",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "This story depends on `US-008` for config loading and `US-013` for script verification. Scope only script-verification remediation, not verifier remediation. Preferred repair path is same worker session when available; that detail comes from `basic-memory/plans/Ralph Queue-Driven Review Flow Plan.md` under Script verification and fix loop. Test fixtures will need richer `backlog task edit` support for `--plan`, `--final-summary`, `--check-ac`, and `--check-dod` so a dumb agent should expect to extend the mock boundary."
+    },
+    {
+      "id": "US-015",
+      "title": "Add schema-validated verifier JSON contract",
+      "description": "As a Ralph operator, I need verifier output to be machine-validated JSON instead of text markers so review outcomes can be parsed safely and deterministically.",
+      "acceptanceCriteria": [
+        "Repo contains `verifier-output.schema.json` describing verifier output with keys `result`, `summary`, and `issues`",
+        "`prompt-verifier.md` requires JSON-only output that matches that schema",
+        "Verifier runs with `codex exec --output-schema` and Ralph parses verifier output with `jq`",
+        "bash `tests/ralph-runtime.sh` passes",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "Baseline: current `prompt-verifier.md` uses `<verification>PASS</verification>` / `<verification>FAIL</verification>` markers and `ralph.sh` scrapes those markers from last-message text. Target JSON shape is in `basic-memory/plans/Ralph Queue-Driven Review Flow Plan.md` under JSON handling, verifier contract, and temp files. Relevant files: `prompt-verifier.md`, `ralph.sh`, `tests/ralph-runtime.sh`, new `verifier-output.schema.json`. Keep worker prompt out of scope except where verifier handoff text must change."
+    },
+    {
+      "id": "US-016",
+      "title": "Move successful work through Review and honor no-review policy",
+      "description": "As a Ralph operator, I need successful worker output to enter an explicit `Review` state before verification and to respect config-driven no-review behavior when verification is disabled.",
+      "acceptanceCriteria": [
+        "When review is enabled, script-verified tasks move to `Review` before verifier runs",
+        "When review is disabled, successful tasks go to `Done` or remain in `Review` based on `review.no_review_terminal_status`",
+        "Completion checks treat `Review` as remaining work only when review is enabled",
+        "bash `tests/ralph-runtime.sh` passes",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "This story depends on `US-007`, `US-008`, and `US-013`. Baseline: current runtime has no `Review` status and verify-none jumps straight to `Done`. State-transition targets come from the plan note sections Script verification and fix loop and Interfaces. Relevant files: `ralph.sh`, `backlog/config.yml`, `tests/ralph-runtime.sh`. Keep verifier JSON parsing out of scope except as already provided by earlier stories."
+    },
+    {
+      "id": "US-017",
+      "title": "Reopen worker on verifier failure until pass or exhaustion",
+      "description": "As a Ralph operator, I need verifier rejection to reopen implementation work instead of immediately terminating in `Review Failed`, while still capping retries so bad tasks do not loop forever.",
+      "acceptanceCriteria": [
+        "Verifier failure appends review notes and reopens the worker for fixes",
+        "Ralph reruns worker -> script verification -> `Review` -> verifier until pass or retry exhaustion",
+        "If same-session repair is impossible because session metadata is missing, Ralph starts a fresh fix session",
+        "Exhausted verifier retries move the task to `Review Failed`",
+        "bash `tests/ralph-runtime.sh` passes",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "This story depends on `US-013` through `US-016`. Baseline: current verifier rejection appends notes, moves task directly to `Review Failed`, and exits. Target repair loop is defined in `basic-memory/plans/Ralph Queue-Driven Review Flow Plan.md` under Script verification and fix loop. Likely files: `ralph.sh`, `tests/ralph-runtime.sh`, maybe prompt text if remediation messaging needs worker-specific wording. Use `tools/ralph/progress.md` only to avoid regressing already-landed session metadata behavior."
+    },
+    {
+      "id": "US-018",
+      "title": "Align runtime tests and docs with the new contract",
+      "description": "As a maintainer, I need tests, prompts, AGENTS guidance, and Basic Memory notes to describe the new runtime contract so future subagents do not reintroduce legacy behavior or stale assumptions.",
+      "acceptanceCriteria": [
+        "`tests/ralph-runtime.sh` matches single-list selection, config-driven assignee filtering, `Review` status, `jq` parsing, `mktemp` temp files, and removed legacy assignee fallback",
+        "`AGENTS.md` and relevant Basic Memory runtime notes describe the `Review` flow, `config.yaml`, verifier JSON schema contract, and no legacy fallback",
+        "`prompt-codex.md` and `prompt-verifier.md` match the remediation loop and no longer mention stale PRD or marker-based completion behavior",
+        "bash `tests/ralph-runtime.sh` passes",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": "Baseline drift is visible in `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, and `basic-memory/testing/Ralph Workflow Implementation Audit.md`: they still mention legacy fallback, two-step claim flow, no-`jq` fixture guards, and marker-based verifier output. This cleanup story is intentionally last so docs/tests can be aligned to the final implemented contract. Relevant files likely include `AGENTS.md`, `prompt-codex.md`, `prompt-verifier.md`, `tests/ralph-runtime.sh`, and the two runtime memory notes under `basic-memory/testing/`."
     }
   ]
 }

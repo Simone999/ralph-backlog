@@ -12,9 +12,6 @@ progress.txt
 #Claude
 .claude/
 
-tools/ralph/*
-!tools/ralph/progress.md
-!tools/ralph/prd.json
 
 .codex/config.toml
 

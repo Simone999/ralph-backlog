@@ -49,3 +49,4 @@ Likely future searches this note should answer: "how to test ralph.sh without re
 
 - [gotcha] `backlog task --plain` omits the `Labels:` line when a task has no labels, so shell parsers and fixtures must tolerate missing label metadata on fresh tasks #backlog #labels #testing
 - [gotcha] Backlog-driven completion checks use fresh `backlog task list -s ... --plain` state after status edits, so shell mocks must update task-list fixtures when tasks move to `Done` or `Review Failed`; stale lists make Ralph think work still remains #backlog #testing #completion
+- [guard] Completion checks that decide whether Ralph has finished all eligible work must mirror dependency filtering from selection; listed `To Do` or retryable `Review Failed` tasks do not count as remaining eligible work unless `dependencies_satisfied` passes #completion #dependencies #testing
