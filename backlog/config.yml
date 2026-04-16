@@ -1,6 +1,6 @@
 project_name: "ralph-backlog"
 default_status: "To Do"
-statuses: ["To Do", "In Progress", "Review Failed", "Done"]
+statuses: ["To Do", "In Progress", "Review", "Review Failed", "Done"]
 labels: []
 definition_of_done:
   - "Tests pass"

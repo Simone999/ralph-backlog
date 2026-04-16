@@ -13,7 +13,7 @@
         "Typecheck passes"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Baseline: `backlog/config.yml` currently has `To Do`, `In Progress`, `Review Failed`, `Done` and no `Review` state. Target: add `Review` between `In Progress` and `Review Failed` because the approved runtime plan uses backlog status order as queue precedence. Files to inspect before editing: `backlog/config.yml`, `basic-memory/plans/Ralph Queue-Driven Review Flow Plan.md` (Summary, Runtime policy and config, Interfaces), and `basic-memory/testing/Ralph Workflow Implementation Audit.md` for current-state drift. A dumb agent should treat this as a pure config change with no runtime code in scope."
     },
     {
