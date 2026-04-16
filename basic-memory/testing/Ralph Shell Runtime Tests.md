@@ -9,7 +9,7 @@ tags:
 
 # Ralph Shell Runtime Tests
 
-When changing `ralph.sh`, keep runtime verification at shell level instead of invoking real Codex. The reliable pattern is a temporary fixture directory that copies `ralph.sh` plus prompt input, prepends a `bin/` folder to `PATH`, and provides tiny mock executables for `codex` and `sleep`.
+When changing `ralph.sh`, keep runtime verification at shell level instead of invoking real Codex. The reliable pattern is a temporary fixture directory that copies `ralph.sh` plus prompt input, prepends a `bin/` folder to `PATH`, and provides tiny mock executables for `codex` plus fixture-local wrappers for commands whose usage you want to assert.
 
 This lets tests verify CLI behavior, runtime control flow, and required-command boundaries without network access or real agent sessions. A useful guard is to omit `jq` from the fixture `PATH` and assert Ralph fails fast, because Codex JSONL parsing now depends on `jq` rather than shell regexes.
 
@@ -21,6 +21,8 @@ Likely future searches this note should answer: "how to test ralph.sh without re
 - [pattern] Sequence-mode validation should fail before Codex starts for both `--sequence` and `--sequence-file`, so shell regressions should assert no mocked Codex stdin file exists on missing-task errors #sequence #testing
 
 - [pattern] Parse `thread.started`, `turn.completed`, and `turn.failed` from `codex exec --json` logs with `jq`; shell tests should model those events explicitly and can wrap fixture-local `jq` to prove the filter path #codex #jsonl #testing
+- [pattern] Last-message capture should use `mktemp` under `TMPDIR`; shell tests can wrap fixture-local `mktemp` to assert the chosen output path and that cleanup happens before the script returns #temp-files #testing
+- [guard] Removing `sleep` from fixture `PATH` is a good regression check that Ralph no longer pauses between successful iterations #timing #testing
 
 - [pattern] Fresh-session runtime tests should feed mocked `codex exec --json` output with a `thread.started` event, then assert Ralph persists assignee `codex` plus label `session_id:<thread_id>` after launch and transitions successful runs to `Done` unless more eligible work remains #backlog #session #testing
 - [guard] Resume tests should use `Labels: session_id:<id>` only; legacy `Assignee: codex@<id>` fixtures should now fail rather than auto-migrate #backlog #session #testing

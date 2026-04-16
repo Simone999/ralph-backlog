@@ -89,7 +89,7 @@
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "Baseline: `basic-memory/testing/Ralph Workflow Implementation Audit.md` notes timestamp-based `/tmp/ralph-last-message-<epoch>.txt` temp files and `sleep 2` between iterations. Target comes from the approved plan's JSON handling, verifier contract, and temp files section. Likely files: `ralph.sh`, `tests/ralph-runtime.sh`, possibly `basic-memory/testing/Ralph Shell Runtime Tests.md` if fixture guidance needs updating. This is runtime hygiene; do not mix in verifier JSON or selection rewrites here."
     },
     {

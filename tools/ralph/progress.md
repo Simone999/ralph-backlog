@@ -6,6 +6,7 @@
 - Revalidation regressions can model mid-selection task changes with fixture files like `mock-backlog/task-1.show-2.txt`; Ralph must reload sequence and auto-selected tasks immediately before worker launch.
 - Runtime resume state is label-only `session_id:<id>`; legacy `Assignee: codex@<session_id>` fixtures should now fail instead of being auto-migrated.
 - Parse Codex JSONL with `jq`, and use fixture-local `jq` wrappers or missing-command tests to prove `thread.started`, `turn.failed`, and `turn.completed` extraction stays on that path.
+- Last-message capture should use `mktemp` under `TMPDIR` and delete the file before `run_codex` returns; shell fixtures should include real `mktemp` plus `rm`, and removing fixture `sleep` is a good regression guard that no fixed pause remains.
 
 --- 
 
@@ -56,4 +57,13 @@
   - `Labels: session_id:<id>` is now canonical resume metadata; do not keep migration tests that expect `Assignee: codex@...` to recover automatically
   - Fixture-local `jq` wrappers are clean way to assert JSONL parsing behavior without touching real agent runs
   - Missing `jq` should fail at startup, because Codex run-log parsing is now a hard runtime dependency rather than optional cleanup
+---
+## 2026-04-17 01:39:16 CEST - US-012
+- Replaced timestamp-based last-message temp files in `ralph.sh` with `mktemp` files under `TMPDIR`, cleaned before `run_codex` returns, and removed the fixed inter-iteration `sleep`
+- Extended `tests/ralph-runtime.sh` with missing-`mktemp`, mktemp-cleanup, and no-sleep-between-iterations regressions
+- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `tools/ralph/prd.json`, `tools/ralph/progress.md`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`, `basic-memory/testing/Ralph Workflow Implementation Audit.md`
+- **Learnings for future iterations:**
+  - `run_codex` temp-file cleanup should not rely only on predictable `/tmp` paths; use `mktemp` inside `TMPDIR` so shell fixtures can isolate temp artifacts per run
+  - If runtime cleanup uses external `rm`, shell fixtures must provide it or tests will report false temp-file leaks
+  - Removing fixture `sleep` is simple proof that Ralph no longer pauses between successful iterations
 ---

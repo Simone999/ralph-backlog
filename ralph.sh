@@ -518,25 +518,35 @@ run_codex(){
   local run_kind="${4:-worker}"
   local session_id="${5:-}"
 
-  local last_message_file="/tmp/$(date -u '+ralph-last-message-%s.txt')"
-  local cmd
-  mkdir -p "$(dirname "$run_file")"
+  (
+    local tmp_root="${TMPDIR:-/tmp}"
+    local last_message_file
+    local last_message
+    local cmd
 
-  if [[ -n "$session_id" ]]; then
-    cmd=("${CODEX_RESUME_CMD[@]}" "$session_id" -o "$last_message_file" --json -)
-  else
-    cmd=("${CODEX_EXEC_CMD[@]}" -o "$last_message_file" --json -)
-  fi
+    mkdir -p "$tmp_root"
+    last_message_file="$(mktemp "$tmp_root/ralph-last-message.XXXXXX")"
+    trap 'rm -f "$last_message_file"' EXIT
+    mkdir -p "$(dirname "$run_file")"
 
-  if ! printf '%s' "$prompt" | "${cmd[@]}" > "$run_file"; then
     if [[ -n "$session_id" ]]; then
-      printf "error: failed to resume Codex %s for task '%s'. Check '%s' for details.\n" "$run_kind" "$task_id" "$run_file" >&2
+      cmd=("${CODEX_RESUME_CMD[@]}" "$session_id" -o "$last_message_file" --json -)
+    else
+      cmd=("${CODEX_EXEC_CMD[@]}" -o "$last_message_file" --json -)
+    fi
+
+    if ! printf '%s' "$prompt" | "${cmd[@]}" > "$run_file"; then
+      if [[ -n "$session_id" ]]; then
+        printf "error: failed to resume Codex %s for task '%s'. Check '%s' for details.\n" "$run_kind" "$task_id" "$run_file" >&2
+        return 1
+      fi
+      printf "error: failed to start Codex %s for task '%s'. Check '%s' for details.\n" "$run_kind" "$task_id" "$run_file" >&2
       return 1
     fi
-    printf "error: failed to start Codex %s for task '%s'. Check '%s' for details.\n" "$run_kind" "$task_id" "$run_file" >&2
-    return 1
-  fi
-  cat "$last_message_file" 2>/dev/null || true
+    last_message="$(cat "$last_message_file" 2>/dev/null || true)"
+    rm -f "$last_message_file"
+    printf '%s' "$last_message"
+  )
 }
 
 run_codex_verification() {
@@ -674,7 +684,7 @@ ALLOWED_ASSIGNEES=()
 NO_REVIEW_TERMINAL_STATUS=""
 MAX_FIX_ATTEMPTS=""
 
-require_cmd backlog cat codex date grep jq mkdir python3 sed seq sleep tr
+require_cmd backlog cat codex date grep jq mkdir mktemp python3 rm sed seq tr
 load_runtime_config
 
 if (( ${#SEQUENCE_TASKS[@]} > 0 )); then
@@ -791,7 +801,6 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   fi
 
   log "Iteration $i complete. Continuing..."
-  sleep 2
 done
 
 echo ""

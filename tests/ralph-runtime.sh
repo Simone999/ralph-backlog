@@ -339,14 +339,8 @@ exit 1
 EOF
   chmod +x "$fixture/bin/backlog"
 
-  cat > "$fixture/bin/sleep" <<'EOF'
-#!/usr/bin/env bash
-exit 0
-EOF
-  chmod +x "$fixture/bin/sleep"
-
   local cmd
-  for cmd in bash cat cp date dirname find grep jq mkdir mv sed seq tee tr python3; do
+  for cmd in bash cat cp date dirname find grep jq mkdir mktemp mv rm sed seq sleep tee tr python3; do
     ln -s "$(command -v "$cmd")" "$fixture/bin/$cmd"
   done
 
@@ -446,6 +440,23 @@ printf '%s\n' "\$*" > "$fixture/tmp/jq-args-\$call_count.txt"
 exec "$real_jq" "\$@"
 EOF
   chmod +x "$fixture/bin/jq"
+}
+
+install_logging_mktemp_wrapper() {
+  local fixture="$1"
+  local real_mktemp
+  real_mktemp="$(command -v mktemp)"
+  rm -f "$fixture/bin/mktemp"
+
+  cat > "$fixture/bin/mktemp" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$*" > "$fixture/tmp/mktemp-args.txt"
+output="\$("$real_mktemp" "\$@")"
+printf '%s\n' "\$output" > "$fixture/tmp/mktemp-output.txt"
+printf '%s\n' "\$output"
+EOF
+  chmod +x "$fixture/bin/mktemp"
 }
 
 test_rejects_amp() {
@@ -563,6 +574,25 @@ test_requires_jq_for_runtime_parsing() {
 
   [[ $status -ne 0 ]] || fail "expected missing jq to fail"
   assert_contains "$output" "missing required command: jq"
+}
+
+test_requires_mktemp_for_last_message_files() {
+  local fixture output status
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  rm "$fixture/bin/mktemp"
+  write_task_list "$fixture" $'To Do:\n  [LOW] TASK-1 - Low todo'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Low todo\n==================================================\n\nStatus: ○ To Do\nPriority: Low\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -ne 0 ]] || fail "expected missing mktemp to fail"
+  assert_contains "$output" "missing required command: mktemp"
 }
 
 test_runs_without_prd_file() {
@@ -1072,6 +1102,55 @@ test_uses_jq_to_extract_turn_failed_error() {
   assert_contains "$jq_args" "select(.type == \"turn.failed\")"
 }
 
+test_uses_mktemp_for_last_message_files_and_cleans_them_up() {
+  local fixture output status codex_args temp_file_path
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  install_logging_mktemp_wrapper "$fixture"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - mktemp task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - mktemp task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 0 ]] || fail "expected final successful task to exit cleanly"
+  [[ -f "$fixture/tmp/mktemp-output.txt" ]] || fail "expected mktemp to be invoked"
+  temp_file_path="$(cat "$fixture/tmp/mktemp-output.txt")"
+  codex_args="$(cat "$fixture/tmp/ralph-codex-args.txt")"
+  assert_contains "$output" "Using Codex session mock-session-123 for task task-1"
+  assert_contains "$codex_args" "-o $temp_file_path"
+  [[ "$temp_file_path" == "$fixture/tmp/"* ]] || fail "expected mktemp file under fixture tmp dir"
+  [[ ! -e "$temp_file_path" ]] || fail "expected last-message temp file to be cleaned up"
+}
+
+test_continues_between_iterations_without_sleep_command() {
+  local fixture output status first_input second_input
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  rm "$fixture/bin/sleep"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - First task\n  [MEDIUM] TASK-2 - Second task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - First task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+  write_task_plain "$fixture" "task-2" $'File: mock/task-2.md\n\nTask TASK-2 - Second task\n==================================================\n\nStatus: ○ To Do\nPriority: Medium\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" 2)"
+  status=$?
+  set -e
+
+  [[ $status -eq 0 ]] || fail "expected two tasks to finish across two iterations"
+  first_input="$(cat "$fixture/tmp/ralph-codex-stdin-1.txt")"
+  second_input="$(cat "$fixture/tmp/ralph-codex-stdin-2.txt")"
+  assert_contains "$output" "Completed at iteration 2 of 2"
+  assert_contains "$first_input" "Task TASK-1 - First task"
+  assert_contains "$second_input" "Task TASK-2 - Second task"
+}
+
 test_fails_when_worker_outcome_is_unclear() {
   local fixture output status edited_task
 
@@ -1275,6 +1354,7 @@ test_repo_has_runtime_config_defaults
 test_requires_python3_for_runtime_config
 test_loads_runtime_config_with_python3_before_worker_run
 test_requires_jq_for_runtime_parsing
+test_requires_mktemp_for_last_message_files
 test_runs_without_prd_file
 test_selects_highest_priority_dependency_ready_todo
 test_default_mode_uses_one_ordered_backlog_list_pass
@@ -1297,6 +1377,8 @@ test_rejects_legacy_assignee_session_metadata_without_label
 test_fails_when_worker_reports_turn_failed
 test_uses_jq_to_capture_session_id_and_completed_turn
 test_uses_jq_to_extract_turn_failed_error
+test_uses_mktemp_for_last_message_files_and_cleans_them_up
+test_continues_between_iterations_without_sleep_command
 test_fails_when_worker_outcome_is_unclear
 test_exits_successfully_when_last_eligible_task_is_done
 test_passes_task_scoped_worker_prompt_to_codex

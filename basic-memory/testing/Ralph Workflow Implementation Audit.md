@@ -20,7 +20,7 @@ The biggest drift is that worker task-shaping steps are not shell-enforced. Writ
 
 Another important drift is prompt trust boundary. The redesign says backlog task content should remain authoritative for task scope while not overriding runtime orchestration rules. The shell currently prepends raw task text before both worker and verifier prompt templates, so task content gets higher prompt position than the immutable instructions. Combined with defaults `RALPH_SANDBOX=danger-full-access` and `RALPH_APPROVAL_POLICY=never`, this keeps prompt-injection risk high.
 
-The script also adds several runtime behaviors not called out in the basic workflow summary: environment-based Codex configuration, JSONL run logs under `runs/`, timestamp-based temp files in `/tmp` for last-message capture, a fixed `sleep 2` between successful iterations, and fail-fast CLI validation for sequence items and verify mode.
+The script also adds several runtime behaviors not called out in the basic workflow summary: environment-based Codex configuration, JSONL run logs under `runs/`, `mktemp`-created last-message files under `TMPDIR`, and fail-fast CLI validation for sequence items and verify mode.
 
 ## Observations
 - [implemented] `ralph.sh` selects dependency-ready backlog tasks from `To Do`, or from `Review Failed` first when `--retry-review-failed` is enabled #selection
@@ -33,7 +33,7 @@ The script also adds several runtime behaviors not called out in the basic workf
 - [implemented] Overall loop completion now depends on backlog eligibility checks, not on worker `<promise>COMPLETE</promise>` output #completion
 - [drift] Worker prompt still tells Codex to emit `<promise>COMPLETE</promise>` when every backlog task is complete, but shell ignores that marker entirely #prompt #completion
 - [risk] Raw backlog task text is prepended before worker and verifier instructions while Codex defaults to `danger-full-access` sandbox and `never` approval #security #prompt-injection
-- [extra] Runtime behavior includes env-configurable model, reasoning, sandbox, approval policy, JSONL run logs, `/tmp` last-message files, and `sleep 2` between iterations #runtime
+- [extra] Runtime behavior includes env-configurable model, reasoning, sandbox, approval policy, JSONL run logs, and `mktemp`-created last-message files that are cleaned up before `run_codex` returns #runtime
 
 ## Relations
 - relates_to [[Ralph Backlog Loop Design Spec]]
