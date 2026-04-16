@@ -4,6 +4,8 @@
 - No-sequence selection should consume one ordered `backlog task list --sort priority --plain` result; shell fixtures should store that separately from status-specific task lists because completion checks still query `-s "<status>"`.
 - Fresh-task claim now uses one `backlog task edit -s "In Progress" -a codex` call; session label write still happens later, after first `thread.started`.
 - Revalidation regressions can model mid-selection task changes with fixture files like `mock-backlog/task-1.show-2.txt`; Ralph must reload sequence and auto-selected tasks immediately before worker launch.
+- Runtime resume state is label-only `session_id:<id>`; legacy `Assignee: codex@<session_id>` fixtures should now fail instead of being auto-migrated.
+- Parse Codex JSONL with `jq`, and use fixture-local `jq` wrappers or missing-command tests to prove `thread.started`, `turn.failed`, and `turn.completed` extraction stays on that path.
 
 --- 
 
@@ -44,4 +46,14 @@
   - `selection.allowed_assignees` is real runtime gating now; a higher-priority task assigned to someone else must be skipped, not claimed
   - Fresh claims are atomic only for assignee+status; `session_id:<id>` still lands in a later edit after `thread.started`
   - Per-read `task.show-N.txt` fixtures are simple way to model “selected task changed before launch” without custom mock logic per test
+---
+## 2026-04-17 01:30:11 CEST - US-011
+- Removed legacy `codex@<session_id>` resume fallback so `ralph.sh` now trusts only `Labels: session_id:<id>` metadata
+- Replaced shell regex JSONL parsing in `ralph.sh` with `jq` extraction for `thread.started`, `turn.failed`, and `turn.completed`
+- Reworked shell regressions to require `jq`, prove `jq` parsing is used, and reject legacy-assignee-only sequence tasks
+- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `tools/ralph/prd.json`, `tools/ralph/progress.md`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`
+- **Learnings for future iterations:**
+  - `Labels: session_id:<id>` is now canonical resume metadata; do not keep migration tests that expect `Assignee: codex@...` to recover automatically
+  - Fixture-local `jq` wrappers are clean way to assert JSONL parsing behavior without touching real agent runs
+  - Missing `jq` should fail at startup, because Codex run-log parsing is now a hard runtime dependency rather than optional cleanup
 ---

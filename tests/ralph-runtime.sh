@@ -346,7 +346,7 @@ EOF
   chmod +x "$fixture/bin/sleep"
 
   local cmd
-  for cmd in bash cat cp date dirname find grep mkdir mv sed seq tee tr python3; do
+  for cmd in bash cat cp date dirname find grep jq mkdir mv sed seq tee tr python3; do
     ln -s "$(command -v "$cmd")" "$fixture/bin/$cmd"
   done
 
@@ -424,6 +424,28 @@ cat > "$fixture/tmp/python3-stdin.txt"
 exec "$real_python3" "\$@" < "$fixture/tmp/python3-stdin.txt"
 EOF
   chmod +x "$fixture/bin/python3"
+}
+
+install_logging_jq_wrapper() {
+  local fixture="$1"
+  local real_jq
+  real_jq="$(command -v jq)"
+  rm -f "$fixture/bin/jq"
+
+  cat > "$fixture/bin/jq" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+count_file="$fixture/tmp/jq-call-count"
+call_count=0
+if [[ -f "\$count_file" ]]; then
+  call_count="\$(cat "\$count_file")"
+fi
+call_count=\$((call_count + 1))
+printf '%s\n' "\$call_count" > "\$count_file"
+printf '%s\n' "\$*" > "$fixture/tmp/jq-args-\$call_count.txt"
+exec "$real_jq" "\$@"
+EOF
+  chmod +x "$fixture/bin/jq"
 }
 
 test_rejects_amp() {
@@ -524,7 +546,26 @@ test_loads_runtime_config_with_python3_before_worker_run() {
   assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
 }
 
-test_runs_without_prd_or_jq() {
+test_requires_jq_for_runtime_parsing() {
+  local fixture output status
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  rm "$fixture/bin/jq"
+  write_task_list "$fixture" $'To Do:\n  [LOW] TASK-1 - Low todo'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Low todo\n==================================================\n\nStatus: ○ To Do\nPriority: Low\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -ne 0 ]] || fail "expected missing jq to fail"
+  assert_contains "$output" "missing required command: jq"
+}
+
+test_runs_without_prd_file() {
   local fixture output status
 
   fixture="$(setup_fixture)"
@@ -947,8 +988,8 @@ test_resumes_prior_session_from_session_label_metadata() {
   assert_contains "$edited_task" "Labels: session_id:resume-123"
 }
 
-test_migrates_legacy_assignee_session_metadata_to_session_label() {
-  local fixture output status edited_task codex_args
+test_rejects_legacy_assignee_session_metadata_without_label() {
+  local fixture output status
 
   fixture="$(setup_fixture)"
   trap 'rm -rf "$fixture"' RETURN
@@ -961,16 +1002,9 @@ test_migrates_legacy_assignee_session_metadata_to_session_label() {
   status=$?
   set -e
 
-  [[ $status -eq 0 ]] || fail "expected final successful task to exit cleanly"
-  codex_args="$(cat "$fixture/tmp/ralph-codex-args.txt")"
-  edited_task="$(cat "$fixture/mock-backlog/last-edited-task.txt")"
-  assert_contains "$output" "Using Codex session legacy-123 for task task-1"
-  assert_contains "$codex_args" "resume"
-  assert_contains "$codex_args" "legacy-123"
-  assert_contains "$edited_task" "Status: ○ Done"
-  assert_contains "$edited_task" "Assignee: codex"
-  assert_contains "$edited_task" "Labels: session_id:legacy-123"
-  assert_not_contains "$edited_task" "codex@legacy-123"
+  [[ $status -ne 0 ]] || fail "expected legacy assignee fallback to stay disabled"
+  assert_contains "$output" "Sequence task 'task-1' is no longer runnable."
+  [[ ! -f "$fixture/tmp/ralph-codex-args.txt" ]] || fail "expected no Codex launch when only legacy assignee metadata exists"
 }
 
 test_fails_when_worker_reports_turn_failed() {
@@ -993,6 +1027,49 @@ test_fails_when_worker_reports_turn_failed() {
   assert_contains "$edited_task" "Status: ○ In Progress"
   assert_contains "$edited_task" "Assignee: codex"
   assert_contains "$edited_task" "Labels: session_id:session-fail-123"
+}
+
+test_uses_jq_to_capture_session_id_and_completed_turn() {
+  local fixture output status jq_args
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  install_logging_jq_wrapper "$fixture"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - jq success task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - jq success task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(MOCK_CODEX_OUTPUT=$'{"type":"thread.started","thread_id":"jq-success-123"}\n{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}' run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 0 ]] || fail "expected final successful task to exit cleanly"
+  jq_args="$(cat "$fixture/tmp/jq-args-1.txt" "$fixture/tmp/jq-args-2.txt" "$fixture/tmp/jq-args-3.txt" 2>/dev/null || true)"
+  assert_contains "$output" "Using Codex session jq-success-123 for task task-1"
+  assert_contains "$jq_args" "select(.type == \"thread.started\")"
+  assert_contains "$jq_args" "select(.type == \"turn.completed\")"
+}
+
+test_uses_jq_to_extract_turn_failed_error() {
+  local fixture output status jq_args
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  install_logging_jq_wrapper "$fixture"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - jq failure task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - jq failure task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(MOCK_CODEX_OUTPUT=$'{"type":"thread.started","thread_id":"jq-fail-123"}\n{"type":"turn.failed","error":"jq parsed failure"}' run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -ne 0 ]] || fail "expected jq-parsed turn.failed outcome to fail"
+  jq_args="$(cat "$fixture/tmp/jq-args-1.txt" "$fixture/tmp/jq-args-2.txt" "$fixture/tmp/jq-args-3.txt" 2>/dev/null || true)"
+  assert_contains "$output" "Codex worker reported failure for task 'task-1': jq parsed failure"
+  assert_contains "$jq_args" "select(.type == \"turn.failed\")"
 }
 
 test_fails_when_worker_outcome_is_unclear() {
@@ -1197,7 +1274,8 @@ test_rejects_invalid_verify_mode
 test_repo_has_runtime_config_defaults
 test_requires_python3_for_runtime_config
 test_loads_runtime_config_with_python3_before_worker_run
-test_runs_without_prd_or_jq
+test_requires_jq_for_runtime_parsing
+test_runs_without_prd_file
 test_selects_highest_priority_dependency_ready_todo
 test_default_mode_uses_one_ordered_backlog_list_pass
 test_default_mode_ignores_review_failed_tasks
@@ -1215,8 +1293,10 @@ test_sequence_repeated_task_fails_fast_after_first_completion
 test_fails_loudly_when_fresh_codex_session_id_is_missing
 test_rolls_back_fresh_claim_when_worker_fails_to_start
 test_resumes_prior_session_from_session_label_metadata
-test_migrates_legacy_assignee_session_metadata_to_session_label
+test_rejects_legacy_assignee_session_metadata_without_label
 test_fails_when_worker_reports_turn_failed
+test_uses_jq_to_capture_session_id_and_completed_turn
+test_uses_jq_to_extract_turn_failed_error
 test_fails_when_worker_outcome_is_unclear
 test_exits_successfully_when_last_eligible_task_is_done
 test_passes_task_scoped_worker_prompt_to_codex

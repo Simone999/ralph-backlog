@@ -195,27 +195,13 @@ extract_session_id_from_labels() {
   return 1
 }
 
-extract_session_id_from_legacy_assignee() {
-  local assignee="${1:-}"
-  if [[ "$assignee" =~ ^codex@([^[:space:]]+)$ ]]; then
-    printf '%s\n' "${BASH_REMATCH[1]}"
-    return 0
-  fi
-  return 1
-}
-
 extract_task_session_id() {
   local task_plain="$1"
-  local labels assignee
+  local labels
 
   labels="$(extract_task_labels "$task_plain" || true)"
   if [[ -n "$labels" ]]; then
     extract_session_id_from_labels "$labels" && return 0
-  fi
-
-  assignee="$(extract_task_assignee "$task_plain" || true)"
-  if [[ -n "$assignee" ]]; then
-    extract_session_id_from_legacy_assignee "$assignee" && return 0
   fi
 
   return 1
@@ -324,49 +310,33 @@ extract_verification_notes() {
   printf '%s\n' "$1" | sed '/<verification>PASS<\/verification>/d;/<verification>FAIL<\/verification>/d;/^[[:space:]]*$/d'
 }
 
+extract_first_jq_match() {
+  local run_file="$1"
+  local filter="$2"
+  local match
+
+  if ! match="$(jq -r "$filter" "$run_file" | sed -n '1p')"; then
+    return 1
+  fi
+
+  [[ -n "$match" ]] || return 1
+  [[ "$match" != "null" ]] || return 1
+  printf '%s\n' "$match"
+}
+
 extract_codex_thread_id_from_run_log() {
   local run_file="$1"
-  local line
-
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ "$line" == *'"type":"thread.started"'* ]] || continue
-    if [[ "$line" =~ \"thread_id\":\"([^\"]+)\" ]]; then
-      printf '%s\n' "${BASH_REMATCH[1]}"
-      return 0
-    fi
-  done < "$run_file"
-
-  return 1
+  extract_first_jq_match "$run_file" 'select(.type == "thread.started") | .thread_id // empty'
 }
 
 extract_turn_failure_from_run_log() {
   local run_file="$1"
-  local line
-
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ "$line" == *'"type":"turn.failed"'* ]] || continue
-    if [[ "$line" =~ \"error\":\"([^\"]+)\" ]]; then
-      printf '%s\n' "${BASH_REMATCH[1]}"
-      return 0
-    fi
-    printf 'unknown error\n'
-    return 0
-  done < "$run_file"
-
-  return 1
+  extract_first_jq_match "$run_file" 'select(.type == "turn.failed") | (.error // "unknown error")'
 }
 
 run_log_has_turn_completed() {
   local run_file="$1"
-  local line
-
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ "$line" == *'"type":"turn.completed"'* ]]; then
-      return 0
-    fi
-  done < "$run_file"
-
-  return 1
+  jq -e 'select(.type == "turn.completed") | true' "$run_file" >/dev/null 2>&1
 }
 
 dependencies_satisfied() {
@@ -704,7 +674,7 @@ ALLOWED_ASSIGNEES=()
 NO_REVIEW_TERMINAL_STATUS=""
 MAX_FIX_ATTEMPTS=""
 
-require_cmd backlog cat codex date grep mkdir python3 sed seq sleep tr
+require_cmd backlog cat codex date grep jq mkdir python3 sed seq sleep tr
 load_runtime_config
 
 if (( ${#SEQUENCE_TASKS[@]} > 0 )); then

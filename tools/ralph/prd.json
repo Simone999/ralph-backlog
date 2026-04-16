@@ -74,7 +74,7 @@
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "Baseline: `tools/ralph/progress.md` says canonical session labels already landed, but `ralph.sh`, `AGENTS.md`, and shell tests still support legacy `codex@...` fallback. This story is cleanup plus parser hardening. Read `tools/ralph/progress.md` entries for US-001, `basic-memory/testing/Ralph Workflow Implementation Audit.md`, and the plan note sections Selection and task lifecycle plus JSON handling. Update tests that currently prove legacy migration or no-`jq` behavior; after this change those tests should be removed or rewritten."
     },
     {
