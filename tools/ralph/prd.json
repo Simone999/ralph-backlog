@@ -59,7 +59,7 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Baseline: current claim flow in `ralph.sh` is intentionally two-step (`-a` then `-s`) and sequence validation only checks task existence. User explicitly changed this requirement: claim must now be atomic, and selected tasks must be revalidated just before Codex launch. Candidate rules come from `basic-memory/plans/Ralph Queue-Driven Review Flow Plan.md` under Selection and task lifecycle. Relevant files: `ralph.sh`, `tests/ralph-runtime.sh`, `config.yaml`. Keep scope to candidate filtering, pre-launch revalidation, and atomic claim only."
     },
     {

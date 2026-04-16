@@ -221,6 +221,39 @@ extract_task_session_id() {
   return 1
 }
 
+assignee_is_allowed() {
+  local assignee="$1"
+  local allowed_assignee
+
+  for allowed_assignee in "${ALLOWED_ASSIGNEES[@]}"; do
+    if [[ "$assignee" == "$allowed_assignee" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+task_has_allowed_auto_assignee() {
+  local task_plain="$1"
+  local assignee
+
+  assignee="$(extract_task_assignee "$task_plain" || true)"
+  [[ -z "$assignee" ]] && return 0
+
+  assignee_is_allowed "$assignee"
+}
+
+task_has_allowed_sequence_assignee() {
+  local task_plain="$1"
+
+  if task_has_allowed_auto_assignee "$task_plain"; then
+    return 0
+  fi
+
+  extract_task_session_id "$task_plain" >/dev/null 2>&1
+}
+
 mark_task_in_progress() {
   local task_id="$1"
   local session_id="${2:-}"
@@ -232,12 +265,7 @@ mark_task_in_progress() {
     return 0
   fi
 
-  if ! backlog task edit "$task_id" -a "codex" >/dev/null; then
-    die "failed to update backlog metadata for task '$task_id'"
-  fi
-
-  if ! backlog task edit "$task_id" -s "In Progress" >/dev/null; then
-    rollback_fresh_task_claim "$task_id" || die "failed to roll back fresh task claim for task '$task_id'"
+  if ! backlog task edit "$task_id" -s "In Progress" -a "codex" >/dev/null; then
     die "failed to update backlog metadata for task '$task_id'"
   fi
 }
@@ -363,6 +391,40 @@ dependencies_satisfied() {
   return 0
 }
 
+task_is_auto_runnable() {
+  local task_plain="$1"
+  local task_status
+
+  task_status="$(extract_task_status "$task_plain" || true)"
+  if [[ "$task_status" == "To Do" ]]; then
+    :
+  elif [[ "$task_status" == "Review Failed" && "$RETRY_REVIEW_FAILED" == "1" ]]; then
+    :
+  else
+    return 1
+  fi
+
+  task_has_allowed_auto_assignee "$task_plain" || return 1
+  dependencies_satisfied "$task_plain"
+}
+
+task_is_sequence_runnable() {
+  local task_plain="$1"
+  local task_status
+
+  task_status="$(extract_task_status "$task_plain" || true)"
+  if [[ "$task_status" == "To Do" || "$task_status" == "Review Failed" ]]; then
+    :
+  elif [[ "$task_status" == "In Progress" ]]; then
+    extract_task_session_id "$task_plain" >/dev/null 2>&1 || return 1
+  else
+    return 1
+  fi
+
+  task_has_allowed_sequence_assignee "$task_plain" || return 1
+  dependencies_satisfied "$task_plain"
+}
+
 list_todo_task_ids() {
   list_task_ids_for_status "To Do"
 }
@@ -425,22 +487,12 @@ eligible_work_remaining() {
 }
 
 select_dependency_ready_task() {
-  local task_id task_plain task_status
+  local task_id task_plain
 
   while IFS= read -r task_id; do
     [[ -n "$task_id" ]] || continue
     task_plain="$(load_task_plain "$task_id")"
-    task_status="$(extract_task_status "$task_plain" || true)"
-
-    if [[ "$task_status" == "To Do" ]]; then
-      :
-    elif [[ "$task_status" == "Review Failed" && "$RETRY_REVIEW_FAILED" == "1" ]]; then
-      :
-    else
-      continue
-    fi
-
-    if dependencies_satisfied "$task_plain"; then
+    if task_is_auto_runnable "$task_plain"; then
       printf '%s\n' "$task_id"
       return 0
     fi
@@ -685,8 +737,27 @@ CODEX_RESUME_CMD=(
 log "Starting Ralph - Tool: $TOOL - Max iterations: $MAX_ITERATIONS"
 
 for i in $(seq 1 $MAX_ITERATIONS); do
-  task_id="$(select_next_task "$((i - 1))")"
-  task_plain="$(load_task_plain "$task_id")"
+  is_sequence_iteration=0
+  if (( (i - 1) < ${#SEQUENCE_TASKS[@]} )); then
+    is_sequence_iteration=1
+  fi
+
+  while true; do
+    task_id="$(select_next_task "$((i - 1))")"
+    task_plain="$(load_task_plain "$task_id")"
+
+    if (( is_sequence_iteration )); then
+      if ! task_is_sequence_runnable "$task_plain"; then
+        die "Sequence task '$task_id' is no longer runnable."
+      fi
+      break
+    fi
+
+    if task_is_auto_runnable "$task_plain"; then
+      break
+    fi
+  done
+
   session_id="$(extract_task_session_id "$task_plain" || true)"
   fresh_start=0
   if [[ -z "$session_id" ]]; then

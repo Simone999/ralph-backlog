@@ -16,7 +16,8 @@ This lets tests verify CLI behavior, runtime control flow, and required-command 
 Likely future searches this note should answer: "how to test ralph.sh without real codex", "why does ralph runtime test remove jq", and "where are shell tests for codex-only loop".
 
 ## Observations
-- [pattern] To prove fresh-session metadata round-trips into a later resume, force the same task twice with `--sequence task-1,task-1`; assert first mocked Codex call emits `thread.started` and second call uses `exec resume <session_id>` #session #testing
+- [pattern] To prove pre-launch revalidation, use per-read task fixtures like `mock-backlog/task-1.show-2.txt`; this lets one ordered-list candidate become unrunnable between selection and worker launch without custom mock code per test #selection #testing
+- [guard] Repeating the same task in `--sequence task-1,task-1` should now fail fast after the first successful iteration, because forced tasks are reloaded and must still be runnable before Codex starts #sequence #testing
 - [pattern] Sequence-mode validation should fail before Codex starts for both `--sequence` and `--sequence-file`, so shell regressions should assert no mocked Codex stdin file exists on missing-task errors #sequence #testing
 
 - [pattern] Treat `turn.completed` as worker success and `turn.failed` as worker failure when consuming `codex exec --json` output; shell tests should model both events explicitly #codex #jsonl #testing
@@ -35,7 +36,8 @@ Likely future searches this note should answer: "how to test ralph.sh without re
 - [pattern] Prompt migrations should be regression-tested through mocked Codex stdin, asserting required worker instructions are present and stale `prd.json` or task-selection text is absent #prompt #testing
 - [reason] `ralph.sh` prepends assigned task text before `prompt-codex.md`, so stdin assertions catch both prompt drift and wrapper drift in one shell-level test #prompt #shell
 
-- [pattern] Fresh-task claim flow should call `backlog task edit -a codex` before the separate `-s "In Progress"` edit so visible ownership appears before active-work status in backlog history #backlog #workflow #testing
+- [pattern] Fresh-task claim flow should use one `backlog task edit -s "In Progress" -a codex` call; keep the later `-l session_id:<id>` write separate because the session only exists after `thread.started` #backlog #workflow #testing
+- [pattern] Automatic selection should skip tasks whose assignee is not empty and not listed in `config.yaml` `selection.allowed_assignees`, even when those tasks appear earlier in ordered backlog output #backlog #config #testing
 - [pattern] If a fresh worker launch fails before Ralph captures `thread.started`, runtime should roll the task back to `To Do` and clear both assignee and `session_id:` label metadata; shell regressions should cover both missing-session-id and failed-start paths #backlog #rollback #session #testing
 - [gotcha] Shell backlog mocks need to treat empty assignee and empty label edits as field removal so rollback assertions match real task metadata cleanup instead of leaving blank placeholder lines #mocking #testing #backlog
 - [pattern] When runtime startup depends on repo-root `config.yaml`, shell fixtures should copy that file into temp workspace so config load path matches real repo layout #config #testing

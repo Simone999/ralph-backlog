@@ -2,6 +2,8 @@
 - `backlog/config.yml` status order is runtime queue precedence for review-flow stories; keep `Review` between `In Progress` and `Review Failed`, and lock it with a focused shell test.
 - Root `config.yaml` drives Ralph runtime policy; shell regressions that touch runtime startup should copy that file into fixture and can wrap `python3` to prove config load happens before worker run.
 - No-sequence selection should consume one ordered `backlog task list --sort priority --plain` result; shell fixtures should store that separately from status-specific task lists because completion checks still query `-s "<status>"`.
+- Fresh-task claim now uses one `backlog task edit -s "In Progress" -a codex` call; session label write still happens later, after first `thread.started`.
+- Revalidation regressions can model mid-selection task changes with fixture files like `mock-backlog/task-1.show-2.txt`; Ralph must reload sequence and auto-selected tasks immediately before worker launch.
 
 --- 
 
@@ -33,4 +35,13 @@
   - Queue order now comes from emitted backlog list order, not manual status precedence inside `ralph.sh`
   - Ordered-list selection fixtures need a separate `task-list-all` view; status-specific fixtures still matter for completion checks
   - `extract_task_status` must recognize `Review` even before runtime starts selecting that status, because ordered scans can encounter it while skipping non-runnable work
+---
+## 2026-04-17 01:22:48 CEST - US-010
+- Tightened `ralph.sh` candidate validation so auto-selection skips foreign-assignee tasks, forced sequence tasks revalidate immediately before launch, and fresh claims use one atomic assign+status edit
+- Extended `tests/ralph-runtime.sh` with assignee-filter, invalidation, and atomic-claim regressions plus per-read backlog task variants for revalidation scenarios
+- Files changed: `ralph.sh`, `tests/ralph-runtime.sh`, `tools/ralph/prd.json`, `tools/ralph/progress.md`, `AGENTS.md`, `basic-memory/testing/Ralph Shell Runtime Tests.md`
+- **Learnings for future iterations:**
+  - `selection.allowed_assignees` is real runtime gating now; a higher-priority task assigned to someone else must be skipped, not claimed
+  - Fresh claims are atomic only for assignee+status; `session_id:<id>` still lands in a later edit after `thread.started`
+  - Per-read `task.show-N.txt` fixtures are simple way to model “selected task changed before launch” without custom mock logic per test
 ---

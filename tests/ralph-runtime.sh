@@ -313,7 +313,18 @@ fi
 
 if [[ "${1:-}" == "task" && -n "${2:-}" ]]; then
   task_id="${2,,}"
+  count_file="$mock_dir/${task_id}.show-count"
+  show_count=0
+  if [[ -f "$count_file" ]]; then
+    show_count="$(cat "$count_file")"
+  fi
+  show_count=$((show_count + 1))
+  printf '%s\n' "$show_count" > "$count_file"
   task_file="$mock_dir/${task_id}.txt"
+  variant_file="$mock_dir/${task_id}.show-${show_count}.txt"
+  if [[ -f "$variant_file" ]]; then
+    task_file="$variant_file"
+  fi
   printf 'task %s --plain\n' "$task_id" >> "$mock_dir/backlog-show-log.txt"
   if [[ -f "$task_file" ]]; then
     cat "$task_file"
@@ -381,6 +392,15 @@ write_task_plain() {
   local content="$3"
 
   printf '%s\n' "$content" > "$fixture/mock-backlog/${task_id}.txt"
+}
+
+write_task_plain_variant() {
+  local fixture="$1"
+  local task_id="$2"
+  local read_number="$3"
+  local content="$4"
+
+  printf '%s\n' "$content" > "$fixture/mock-backlog/${task_id}.show-${read_number}.txt"
 }
 
 write_runtime_config() {
@@ -612,7 +632,7 @@ test_retry_review_failed_prefers_review_failed_task() {
   write_ordered_task_list "$fixture" $'Review Failed:\n  [HIGH] TASK-1 - Failed review task\nTo Do:\n  [MEDIUM] TASK-2 - Fresh todo'
   write_task_list "$fixture" $'To Do:\n  [MEDIUM] TASK-2 - Fresh todo'
   write_task_list_for_status "$fixture" "Review Failed" $'Review Failed:\n  [HIGH] TASK-1 - Failed review task'
-  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Failed review task\n==================================================\n\nStatus: ○ Review Failed\nPriority: High\nCreated: 2026-04-16 00:00\nAssignee: codex@resume-review-123'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Failed review task\n==================================================\n\nStatus: ○ Review Failed\nPriority: High\nCreated: 2026-04-16 00:00\nAssignee: codex\nLabels: session_id:resume-review-123'
   write_task_plain "$fixture" "task-2" $'File: mock/task-2.md\n\nTask TASK-2 - Fresh todo\n==================================================\n\nStatus: ○ To Do\nPriority: Medium\nCreated: 2026-04-16 00:00'
 
   set +e
@@ -734,7 +754,82 @@ test_captures_fresh_session_id_and_writes_session_label() {
   assert_not_contains "$edited_task" "codex@session-fresh-123"
 }
 
-test_claims_fresh_task_by_assigning_before_marking_in_progress() {
+test_skips_foreign_assignee_and_selects_allowed_candidate() {
+  local fixture output status codex_input show_log
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_ordered_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Foreign assignee\n  [MEDIUM] TASK-2 - Allowed assignee\n  [LOW] TASK-3 - Empty assignee'
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Foreign assignee\n  [MEDIUM] TASK-2 - Allowed assignee\n  [LOW] TASK-3 - Empty assignee'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Foreign assignee\n==================================================\n\nStatus: ○ To Do\nPriority: High\nAssignee: alice\nCreated: 2026-04-16 00:00'
+  write_task_plain "$fixture" "task-2" $'File: mock/task-2.md\n\nTask TASK-2 - Allowed assignee\n==================================================\n\nStatus: ○ To Do\nPriority: Medium\nAssignee: codex\nCreated: 2026-04-16 00:00'
+  write_task_plain "$fixture" "task-3" $'File: mock/task-3.md\n\nTask TASK-3 - Empty assignee\n==================================================\n\nStatus: ○ To Do\nPriority: Low\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  codex_input="$(cat "$fixture/tmp/ralph-codex-stdin.txt")"
+  show_log="$(cat "$fixture/mock-backlog/backlog-show-log.txt")"
+  assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
+  assert_contains "$codex_input" "Task TASK-2 - Allowed assignee"
+  assert_not_contains "$codex_input" "Task TASK-1 - Foreign assignee"
+  assert_contains "$show_log" "task task-1 --plain"
+  assert_contains "$show_log" "task task-2 --plain"
+  assert_not_contains "$show_log" "task task-3 --plain"
+}
+
+test_revalidates_selected_candidate_before_launch_and_skips_invalidated_task() {
+  local fixture output status codex_input show_log
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_ordered_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Flaky candidate\n  [MEDIUM] TASK-2 - Stable candidate'
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Flaky candidate\n  [MEDIUM] TASK-2 - Stable candidate'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Flaky candidate\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+  write_task_plain_variant "$fixture" "task-1" 2 $'File: mock/task-1.md\n\nTask TASK-1 - Flaky candidate\n==================================================\n\nStatus: ○ To Do\nPriority: High\nAssignee: alice\nCreated: 2026-04-16 00:00'
+  write_task_plain_variant "$fixture" "task-1" 3 $'File: mock/task-1.md\n\nTask TASK-1 - Flaky candidate\n==================================================\n\nStatus: ○ To Do\nPriority: High\nAssignee: alice\nCreated: 2026-04-16 00:00'
+  write_task_plain "$fixture" "task-2" $'File: mock/task-2.md\n\nTask TASK-2 - Stable candidate\n==================================================\n\nStatus: ○ To Do\nPriority: Medium\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 ]] || fail "expected single iteration to stop at max iterations"
+  codex_input="$(cat "$fixture/tmp/ralph-codex-stdin.txt")"
+  show_log="$(cat "$fixture/mock-backlog/backlog-show-log.txt")"
+  assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
+  assert_contains "$codex_input" "Task TASK-2 - Stable candidate"
+  assert_not_contains "$codex_input" "Task TASK-1 - Flaky candidate"
+  [[ "$(printf '%s\n' "$show_log" | grep -c '^task task-1 --plain$' | tr -d ' ')" -ge 2 ]] || fail "expected task-1 to be reloaded before launch"
+}
+
+test_sequence_fails_fast_when_forced_task_becomes_invalid() {
+  local fixture output status
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_task_list "$fixture" $'To Do:\n  [HIGH] TASK-1 - Forced task'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Forced task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nCreated: 2026-04-16 00:00'
+  write_task_plain_variant "$fixture" "task-1" 2 $'File: mock/task-1.md\n\nTask TASK-1 - Forced task\n==================================================\n\nStatus: ○ To Do\nPriority: High\nAssignee: alice\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" --sequence task-1 1)"
+  status=$?
+  set -e
+
+  [[ $status -ne 0 ]] || fail "expected invalidated forced task to fail"
+  assert_contains "$output" "Sequence task 'task-1' is no longer runnable."
+  [[ ! -f "$fixture/tmp/ralph-codex-stdin.txt" ]] || fail "expected codex not to run when forced task becomes invalid"
+}
+
+test_claims_fresh_task_with_one_atomic_edit() {
   local fixture output status first_edit second_edit
 
   fixture="$(setup_fixture)"
@@ -752,14 +847,12 @@ test_claims_fresh_task_by_assigning_before_marking_in_progress() {
   first_edit="$(sed -n '1p' "$fixture/mock-backlog/backlog-edit-log.txt")"
   second_edit="$(sed -n '2p' "$fixture/mock-backlog/backlog-edit-log.txt")"
   assert_contains "$output" "Using Codex session session-fresh-123 for task task-1"
-  assert_contains "$first_edit" 'task edit task-1 task edit task-1 -a codex'
-  assert_not_contains "$first_edit" '-s In Progress'
-  assert_contains "$second_edit" 'task edit task-1 task edit task-1 -s In Progress'
-  assert_not_contains "$second_edit" '-a codex'
+  assert_contains "$first_edit" 'task edit task-1 task edit task-1 -s In Progress -a codex'
+  assert_contains "$second_edit" 'task edit task-1 task edit task-1 -l session_id:session-fresh-123'
 }
 
-test_round_trips_fresh_session_into_resume_run() {
-  local fixture output status first_args second_args edited_task
+test_sequence_repeated_task_fails_fast_after_first_completion() {
+  local fixture output status first_args edited_task
 
   fixture="$(setup_fixture)"
   trap 'rm -rf "$fixture"' RETURN
@@ -772,14 +865,13 @@ test_round_trips_fresh_session_into_resume_run() {
   status=$?
   set -e
 
-  [[ $status -eq 0 ]] || fail "expected sequence to finish once forced work is done"
+  [[ $status -ne 0 ]] || fail "expected repeated completed task to fail fast"
   first_args="$(cat "$fixture/tmp/ralph-codex-args-1.txt")"
-  second_args="$(cat "$fixture/tmp/ralph-codex-args-2.txt")"
   edited_task="$(cat "$fixture/mock-backlog/task-1.txt")"
   assert_contains "$output" "Using Codex session session-roundtrip-123 for task task-1"
+  assert_contains "$output" "Sequence task 'task-1' is no longer runnable."
   assert_not_contains "$first_args" "resume"
-  assert_contains "$second_args" "resume"
-  assert_contains "$second_args" "session-roundtrip-123"
+  [[ ! -f "$fixture/tmp/ralph-codex-args-2.txt" ]] || fail "expected second forced iteration to stop before Codex resume"
   assert_contains "$edited_task" "Status: ○ Done"
   assert_contains "$edited_task" "Assignee: codex"
   assert_contains "$edited_task" "Labels: session_id:session-roundtrip-123"
@@ -1082,7 +1174,7 @@ test_sequence_can_force_review_failed_task_without_retry_flag() {
   trap 'rm -rf "$fixture"' RETURN
   mkdir -p "$fixture/tmp"
   write_task_list "$fixture" $'To Do:\n  [LOW] TASK-2 - Fresh todo'
-  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Forced failed review task\n==================================================\n\nStatus: ○ Review Failed\nPriority: High\nCreated: 2026-04-16 00:00\nAssignee: codex@resume-review-999'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Forced failed review task\n==================================================\n\nStatus: ○ Review Failed\nPriority: High\nCreated: 2026-04-16 00:00\nAssignee: codex\nLabels: session_id:resume-review-999'
   write_task_plain "$fixture" "task-2" $'File: mock/task-2.md\n\nTask TASK-2 - Fresh todo\n==================================================\n\nStatus: ○ To Do\nPriority: Low\nCreated: 2026-04-16 00:00'
 
   set +e
@@ -1110,13 +1202,16 @@ test_selects_highest_priority_dependency_ready_todo
 test_default_mode_uses_one_ordered_backlog_list_pass
 test_default_mode_ignores_review_failed_tasks
 test_retry_review_failed_prefers_review_failed_task
+test_skips_foreign_assignee_and_selects_allowed_candidate
+test_revalidates_selected_candidate_before_launch_and_skips_invalidated_task
 test_sequence_cli_uses_explicit_order
 test_sequence_file_uses_explicit_order
 test_sequence_missing_task_fails_fast
 test_sequence_file_missing_task_fails_fast
 test_captures_fresh_session_id_and_writes_session_label
-test_claims_fresh_task_by_assigning_before_marking_in_progress
-test_round_trips_fresh_session_into_resume_run
+test_claims_fresh_task_with_one_atomic_edit
+test_sequence_fails_fast_when_forced_task_becomes_invalid
+test_sequence_repeated_task_fails_fast_after_first_completion
 test_fails_loudly_when_fresh_codex_session_id_is_missing
 test_rolls_back_fresh_claim_when_worker_fails_to_start
 test_resumes_prior_session_from_session_label_metadata
