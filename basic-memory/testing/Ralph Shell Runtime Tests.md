@@ -38,6 +38,8 @@ Likely future searches this note should answer: "how to test ralph.sh without re
 - [pattern] Fresh-task claim flow should call `backlog task edit -a codex` before the separate `-s "In Progress"` edit so visible ownership appears before active-work status in backlog history #backlog #workflow #testing
 - [pattern] If a fresh worker launch fails before Ralph captures `thread.started`, runtime should roll the task back to `To Do` and clear both assignee and `session_id:` label metadata; shell regressions should cover both missing-session-id and failed-start paths #backlog #rollback #session #testing
 - [gotcha] Shell backlog mocks need to treat empty assignee and empty label edits as field removal so rollback assertions match real task metadata cleanup instead of leaving blank placeholder lines #mocking #testing #backlog
+- [pattern] When runtime startup depends on repo-root `config.yaml`, shell fixtures should copy that file into temp workspace so config load path matches real repo layout #config #testing
+- [pattern] Wrap fixture `python3` when you need to prove `config.yaml` loads before worker launch; capture args and stdin instead of invoking real agents #python #config #testing
 
 ## Relations
 - relates_to [[Ralph Backlog Loop Design Spec]]

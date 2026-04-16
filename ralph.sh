@@ -20,6 +20,64 @@ require_cmd() {
   done
 }
 
+load_runtime_config() {
+  local config_file="$SCRIPT_DIR/config.yaml"
+  local config_output
+
+  [[ -f "$config_file" ]] || die "missing runtime config: $config_file"
+
+  if ! config_output="$(
+    python3 - "$config_file" <<'PY'
+from pathlib import Path
+import sys
+
+import yaml
+
+config_path = Path(sys.argv[1])
+config = yaml.safe_load(config_path.read_text()) or {}
+
+selection = config.get("selection")
+review = config.get("review")
+if not isinstance(selection, dict):
+    raise SystemExit("config.yaml missing mapping: selection")
+if not isinstance(review, dict):
+    raise SystemExit("config.yaml missing mapping: review")
+
+allowed_assignees = selection.get("allowed_assignees")
+if not isinstance(allowed_assignees, list) or not allowed_assignees:
+    raise SystemExit("config.yaml missing non-empty list: selection.allowed_assignees")
+
+normalized_assignees = []
+for assignee in allowed_assignees:
+    if not isinstance(assignee, str) or not assignee.strip():
+        raise SystemExit("config.yaml has invalid assignee in selection.allowed_assignees")
+    normalized_assignees.append(assignee.strip())
+
+no_review_terminal_status = review.get("no_review_terminal_status")
+if no_review_terminal_status not in {"done", "review"}:
+    raise SystemExit("config.yaml has invalid review.no_review_terminal_status")
+
+max_fix_attempts = review.get("max_fix_attempts")
+if not isinstance(max_fix_attempts, int) or max_fix_attempts < 0:
+    raise SystemExit("config.yaml has invalid review.max_fix_attempts")
+
+print(",".join(normalized_assignees))
+print(no_review_terminal_status)
+print(max_fix_attempts)
+PY
+  )"; then
+    die "failed to load runtime config from '$config_file'"
+  fi
+
+  local config_lines=()
+  mapfile -t config_lines <<< "$config_output"
+  [[ ${#config_lines[@]} -eq 3 ]] || die "failed to load runtime config from '$config_file'"
+
+  IFS=',' read -r -a ALLOWED_ASSIGNEES <<< "${config_lines[0]}"
+  NO_REVIEW_TERMINAL_STATUS="${config_lines[1]}"
+  MAX_FIX_ATTEMPTS="${config_lines[2]}"
+}
+
 normalize_task_id() {
   printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]'
 }
@@ -577,8 +635,12 @@ RALPH_MODEL="${RALPH_MODEL:-gpt-5.4}"
 RALPH_REASONING="${RALPH_REASONING:-high}"
 RALPH_SANDBOX="${RALPH_SANDBOX:-danger-full-access}"
 RALPH_APPROVAL_POLICY="${RALPH_APPROVAL_POLICY:-never}"
+ALLOWED_ASSIGNEES=()
+NO_REVIEW_TERMINAL_STATUS=""
+MAX_FIX_ATTEMPTS=""
 
-require_cmd backlog cat codex date grep mkdir sed seq sleep tr
+require_cmd backlog cat codex date grep mkdir python3 sed seq sleep tr
+load_runtime_config
 
 if (( ${#SEQUENCE_TASKS[@]} > 0 )); then
   validate_sequence_tasks

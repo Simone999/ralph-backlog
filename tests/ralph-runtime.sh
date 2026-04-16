@@ -30,6 +30,9 @@ setup_fixture() {
   cp "$REPO_ROOT/ralph.sh" "$fixture/ralph.sh"
   cp "$REPO_ROOT/prompt-codex.md" "$fixture/prompt-codex.md"
   cp "$REPO_ROOT/prompt-verifier.md" "$fixture/prompt-verifier.md"
+  if [[ -f "$REPO_ROOT/config.yaml" ]]; then
+    cp "$REPO_ROOT/config.yaml" "$fixture/config.yaml"
+  fi
   mkdir -p "$fixture/bin"
 
   cat > "$fixture/bin/codex" <<'EOF'
@@ -316,7 +319,7 @@ EOF
   chmod +x "$fixture/bin/sleep"
 
   local cmd
-  for cmd in bash cat cp date dirname find grep mkdir mv sed seq tee tr; do
+  for cmd in bash cat cp date dirname find grep mkdir mv sed seq tee tr python3; do
     ln -s "$(command -v "$cmd")" "$fixture/bin/$cmd"
   done
 
@@ -357,6 +360,29 @@ write_task_plain() {
   printf '%s\n' "$content" > "$fixture/mock-backlog/${task_id}.txt"
 }
 
+write_runtime_config() {
+  local fixture="$1"
+  local content="$2"
+
+  printf '%s\n' "$content" > "$fixture/config.yaml"
+}
+
+install_logging_python3_wrapper() {
+  local fixture="$1"
+  local real_python3
+  real_python3="$(command -v python3)"
+  rm -f "$fixture/bin/python3"
+
+  cat > "$fixture/bin/python3" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$*" > "$fixture/tmp/python3-args.txt"
+cat > "$fixture/tmp/python3-stdin.txt"
+exec "$real_python3" "\$@" < "$fixture/tmp/python3-stdin.txt"
+EOF
+  chmod +x "$fixture/bin/python3"
+}
+
 test_rejects_amp() {
   local output status
 
@@ -391,6 +417,68 @@ test_rejects_invalid_verify_mode() {
 
   [[ $status -ne 0 ]] || fail "expected invalid --verify value to fail"
   assert_contains "$output" "Invalid verify mode 'broken'. Must be one of: none, same-session, new-session."
+}
+
+test_repo_has_runtime_config_defaults() {
+  local summary
+
+  [[ -f "$REPO_ROOT/config.yaml" ]] || fail "expected repo root config.yaml"
+  summary="$(python3 - <<'PY'
+from pathlib import Path
+import yaml
+
+config = yaml.safe_load(Path("config.yaml").read_text())
+assert config["selection"]["allowed_assignees"] == ["codex"]
+assert config["review"]["no_review_terminal_status"] == "done"
+assert config["review"]["max_fix_attempts"] == 2
+print("config-ok")
+PY
+)"
+  [[ "$summary" == "config-ok" ]] || fail "unexpected config summary: $summary"
+}
+
+test_requires_python3_for_runtime_config() {
+  local fixture output status
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  rm "$fixture/bin/python3"
+  write_task_list "$fixture" $'To Do:\n  [LOW] TASK-1 - Low todo'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Low todo\n==================================================\n\nStatus: ○ To Do\nPriority: Low\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -ne 0 ]] || fail "expected missing python3 to fail"
+  assert_contains "$output" "missing required command: python3"
+}
+
+test_loads_runtime_config_with_python3_before_worker_run() {
+  local fixture output status python3_args python3_stdin
+
+  fixture="$(setup_fixture)"
+  trap 'rm -rf "$fixture"' RETURN
+  mkdir -p "$fixture/tmp"
+  write_runtime_config "$fixture" $'selection:\n  allowed_assignees:\n    - codex\nreview:\n  no_review_terminal_status: done\n  max_fix_attempts: 7'
+  install_logging_python3_wrapper "$fixture"
+  write_task_list "$fixture" $'To Do:\n  [LOW] TASK-1 - Low todo'
+  write_task_plain "$fixture" "task-1" $'File: mock/task-1.md\n\nTask TASK-1 - Low todo\n==================================================\n\nStatus: ○ To Do\nPriority: Low\nCreated: 2026-04-16 00:00'
+
+  set +e
+  output="$(run_script "$fixture" 1)"
+  status=$?
+  set -e
+
+  [[ $status -eq 1 || $status -eq 0 ]] || fail "expected runtime to reach normal exit path"
+  [[ -f "$fixture/tmp/python3-args.txt" ]] || fail "expected runtime config loader to invoke python3"
+  python3_args="$(cat "$fixture/tmp/python3-args.txt")"
+  python3_stdin="$(cat "$fixture/tmp/python3-stdin.txt")"
+  assert_contains "$python3_args" "config.yaml"
+  assert_contains "$python3_stdin" "import yaml"
+  assert_contains "$output" "Starting Ralph - Tool: codex - Max iterations: 1"
 }
 
 test_runs_without_prd_or_jq() {
@@ -958,6 +1046,9 @@ test_sequence_can_force_review_failed_task_without_retry_flag() {
 test_rejects_amp
 test_rejects_claude
 test_rejects_invalid_verify_mode
+test_repo_has_runtime_config_defaults
+test_requires_python3_for_runtime_config
+test_loads_runtime_config_with_python3_before_worker_run
 test_runs_without_prd_or_jq
 test_selects_highest_priority_dependency_ready_todo
 test_default_mode_ignores_review_failed_tasks

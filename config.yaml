@@ -1,0 +1,6 @@
+selection:
+  allowed_assignees:
+    - codex
+review:
+  no_review_terminal_status: done
+  max_fix_attempts: 2

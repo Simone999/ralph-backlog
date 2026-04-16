@@ -28,7 +28,7 @@
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Baseline: runtime policy is currently hardcoded in `ralph.sh`; there is no root `config.yaml`. Target config shape comes from `basic-memory/plans/Ralph Queue-Driven Review Flow Plan.md` under Runtime policy and config. Root `config.yaml` is Ralph-only and separate from Backlog's own `backlog/config.yml`. Likely files: `ralph.sh`, `tests/ralph-runtime.sh`, new `config.yaml`. Use `tools/ralph/progress.md` only as evidence of already-landed runtime work; do not update it in this task."
     },
     {
