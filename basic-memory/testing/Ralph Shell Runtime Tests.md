@@ -9,7 +9,7 @@ tags:
 
 # Ralph Shell Runtime Tests
 
-When changing `ralph.sh`, keep runtime verification at shell level instead of invoking real Codex. The reliable pattern is a temporary fixture directory that copies `ralph.sh` plus prompt input, prepends a `bin/` folder to `PATH`, and provides tiny mock executables for `codex` plus fixture-local wrappers for commands whose usage you want to assert.
+When changing `ralph.sh`, keep runtime verification at shell level instead of invoking real Codex. The reliable pattern is a temporary fixture directory that copies `ralph.sh` plus prompt input, prepends a `bin/` folder to `PATH`, and provides tiny mock executables for `codex` and `sleep`.
 
 This lets tests verify CLI behavior, runtime control flow, and required-command boundaries without network access or real agent sessions. A useful guard is to omit `jq` from the fixture `PATH` and assert Ralph fails fast, because Codex JSONL parsing now depends on `jq` rather than shell regexes.
 
@@ -21,8 +21,6 @@ Likely future searches this note should answer: "how to test ralph.sh without re
 - [pattern] Sequence-mode validation should fail before Codex starts for both `--sequence` and `--sequence-file`, so shell regressions should assert no mocked Codex stdin file exists on missing-task errors #sequence #testing
 
 - [pattern] Parse `thread.started`, `turn.completed`, and `turn.failed` from `codex exec --json` logs with `jq`; shell tests should model those events explicitly and can wrap fixture-local `jq` to prove the filter path #codex #jsonl #testing
-- [pattern] Last-message capture should use `mktemp` under `TMPDIR`; shell tests can wrap fixture-local `mktemp` to assert the chosen output path and that cleanup happens before the script returns #temp-files #testing
-- [guard] Removing `sleep` from fixture `PATH` is a good regression check that Ralph no longer pauses between successful iterations #timing #testing
 
 - [pattern] Fresh-session runtime tests should feed mocked `codex exec --json` output with a `thread.started` event, then assert Ralph persists assignee `codex` plus label `session_id:<thread_id>` after launch and transitions successful runs to `Done` unless more eligible work remains #backlog #session #testing
 - [guard] Resume tests should use `Labels: session_id:<id>` only; legacy `Assignee: codex@<id>` fixtures should now fail rather than auto-migrate #backlog #session #testing
@@ -42,8 +40,8 @@ Likely future searches this note should answer: "how to test ralph.sh without re
 - [pattern] Automatic selection should skip tasks whose assignee is not empty and not listed in `config.yaml` `selection.allowed_assignees`, even when those tasks appear earlier in ordered backlog output #backlog #config #testing
 - [pattern] If a fresh worker launch fails before Ralph captures `thread.started`, runtime should roll the task back to `To Do` and clear both assignee and `session_id:` label metadata; shell regressions should cover both missing-session-id and failed-start paths #backlog #rollback #session #testing
 - [gotcha] Shell backlog mocks need to treat empty assignee and empty label edits as field removal so rollback assertions match real task metadata cleanup instead of leaving blank placeholder lines #mocking #testing #backlog
-- [pattern] When runtime startup depends on repo-root `config.yaml`, shell fixtures should copy that file into temp workspace so config load path matches real repo layout #config #testing
-- [pattern] Wrap fixture `python3` when you need to prove `config.yaml` loads before worker launch; capture args and stdin instead of invoking real agents #python #config #testing
+- [pattern] When Ralph startup depends on repo-root `config.yaml`, shell fixtures should copy that file into temp workspace so runtime boot path matches real repo layout #config #testing
+- [pattern] Wrap `python3` inside fixture when you need to prove `config.yaml` loads before worker launch; capture args and stdin instead of invoking real agents #python #config #testing
 
 ## Relations
 - relates_to [[Ralph Backlog Loop Design Spec]]
